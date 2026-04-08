@@ -410,6 +410,13 @@ function Provider({children,spaceCode,isMgr}){
     setMessages(prev=>prev.filter(m=>m.id!==id));
   },[spaceCode]);
 
+  const pinMsg=useCallback((id)=>{
+    const msg=messages.find(m=>m.id===id);
+    const newPin=msg?!msg.pinned:true;
+    if(db)msgsRef(spaceCode).doc(id).update({pinned:newPin}).catch(()=>{});
+    setMessages(prev=>prev.map(m=>m.id===id?{...m,pinned:newPin}:m));
+  },[spaceCode,messages]);
+
   const setConfigAndSync=useCallback((newConfig)=>{
     if(typeof newConfig==='function'){
       setConfig(prev=>{const c=newConfig(prev);if(db)spaceRef(spaceCode).set({config:c},{merge:true}).catch(()=>{});return c});
@@ -470,7 +477,7 @@ function Provider({children,spaceCode,isMgr}){
     return()=>unsubs.forEach(u=>u());
   },[]);
 
-  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus}}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus}}>{children}</Ctx.Provider>;
 }
 
 // ============== NOTIFICATION ENGINE ==============
@@ -2033,88 +2040,120 @@ function NotificationPopup({isMgr}){
 
 // ============== MESSAGE PANEL (Manager) ==============
 function ChatPage({isMgr}){
-  const {messages,sendMsg,seenMsg,deleteMsg,config,spacesStatus,spaceCode}=useContext(Ctx);
+  const {messages,sendMsg,seenMsg,deleteMsg,pinMsg,config,spacesStatus,spaceCode}=useContext(Ctx);
   const [text,setText]=useState('');
   const [replyTo,setReplyTo]=useState(null);
   const [menuMsg,setMenuMsg]=useState(null);
+  const [showPinned,setShowPinned]=useState(false);
   const sorted=[...messages].sort((a,b)=>new Date(a.ts)-new Date(b.ts));
+  const pinned=messages.filter(m=>m.pinned);
   const bottomRef=useRef(null);
   const longPressRef=useRef(null);
+  const inputRef=useRef(null);
   const myRole=isMgr?'manager':'closeuse';
   const otherRole=isMgr?'closeuse':'manager';
   const otherName=isMgr?(config.closeuseName||'Closeuse'):'Manager';
 
-  // Mark other's messages as seen
-  useEffect(()=>{
-    messages.filter(m=>m.from===otherRole&&!m.seen).forEach(m=>seenMsg(m.id));
-  },[messages]);
-
+  useEffect(()=>{messages.filter(m=>m.from===otherRole&&!m.seen).forEach(m=>seenMsg(m.id))},[messages]);
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:'smooth'})},[sorted.length]);
 
   const doSend=()=>{
     if(!text.trim())return;
-    const payload=replyTo?`↩ ${replyTo.text.slice(0,40)}${replyTo.text.length>40?'...':''}\n\n${text}`:text;
-    sendMsg(payload,myRole);
+    sendMsg(JSON.stringify({text:text,replyId:replyTo?.id||null,replyText:replyTo?.rawText||null,replyFrom:replyTo?.from||null}),myRole);
     setText('');setReplyTo(null);
   };
-
-  // Long press handling
-  const startPress=(m)=>{longPressRef.current=setTimeout(()=>setMenuMsg(m),500)};
+  const parseMsg=(m)=>{try{const p=JSON.parse(m.text);return{text:p.text||m.text,replyId:p.replyId,replyText:p.replyText,replyFrom:p.replyFrom}}catch(e){return{text:m.text,replyId:null,replyText:null,replyFrom:null}}};
+  const startPress=(m)=>{longPressRef.current=setTimeout(()=>{setMenuMsg(m);vibrate([30])},400)};
   const endPress=()=>{if(longPressRef.current)clearTimeout(longPressRef.current)};
-
-  const copyText=(t)=>{navigator.clipboard?.writeText(t).then(()=>setMenuMsg(null)).catch(()=>{setMenuMsg(null)})};
-
-  const isOnline=()=>{
-    if(!isMgr)return true;
-    const st=spacesStatus[spaceCode];
-    return st?(Date.now()-st.lastSeen)<60000:false;
-  };
+  const isOnline=()=>{if(!isMgr)return true;const st=spacesStatus[spaceCode];return st?(Date.now()-st.lastSeen)<60000:false};
 
   return(
-    <div className="page" style={{display:'flex',flexDirection:'column',background:'#F5F5F0'}}>
+    <div className="page" style={{display:'flex',flexDirection:'column',background:'#0b141a'}}>
       {/* Header */}
-      <div style={{position:'sticky',top:0,zIndex:40,background:'#fff',padding:'10px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:10}}>
-        <div style={{width:38,height:38,borderRadius:19,background:isMgr?'linear-gradient(135deg,#22C55E,#16A34A)':'linear-gradient(135deg,#111,#333)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-          <span style={{fontSize:14,fontWeight:800,color:'#fff'}}>{isMgr?(config.closeuseCode||'CL').slice(0,2):'M'}</span>
+      <div style={{position:'sticky',top:0,zIndex:40,background:'#1f2c34',padding:'6px 10px',display:'flex',alignItems:'center',gap:10}}>
+        <div style={{width:40,height:40,borderRadius:20,background:'#2a3942',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <svg viewBox="0 0 24 24" fill="#8696a0" style={{width:26,height:26}}><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
         </div>
         <div style={{flex:1}}>
-          <div style={{fontSize:15,fontWeight:700}}>{otherName}</div>
-          <div style={{fontSize:11,fontWeight:500,color:isOnline()?'var(--green-vivid)':'var(--muted)'}}>{isOnline()?'En ligne':'Hors ligne'}</div>
+          <div style={{fontSize:16,fontWeight:500,color:'#e9edef'}}>{otherName}</div>
+          <div style={{fontSize:13,color:isOnline()?'#00a884':'#8696a0'}}>{isOnline()?'en ligne':'hors ligne'}</div>
         </div>
       </div>
 
+      {/* Pinned */}
+      {pinned.length>0&&(
+        <div onClick={()=>setShowPinned(!showPinned)} style={{background:'#1f2c34',padding:'8px 14px',borderBottom:'1px solid #222d35',display:'flex',alignItems:'center',gap:8}}>
+          <svg viewBox="0 0 24 24" fill="#00a884" style={{width:14,height:14,transform:'rotate(45deg)'}}><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+          <div style={{flex:1,fontSize:13,color:'#e9edef',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{parseMsg(pinned[pinned.length-1]).text}</div>
+          <span style={{fontSize:11,color:'#8696a0'}}>{pinned.length>1?pinned.length:''}</span>
+        </div>
+      )}
+      {showPinned&&pinned.length>0&&(
+        <div style={{background:'#111b21',padding:'4px 14px 8px',borderBottom:'1px solid #222d35',maxHeight:180,overflowY:'auto'}}>
+          {pinned.map(m=>(
+            <div key={m.id} style={{padding:'8px 0',borderBottom:'1px solid #222d35',display:'flex',gap:8,alignItems:'center'}}>
+              <div style={{flex:1,fontSize:13,color:'#d1d7db',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{parseMsg(m).text}</div>
+              <button onClick={e=>{e.stopPropagation();pinMsg(m.id)}} style={{fontSize:10,color:'#8696a0',padding:'3px 8px',borderRadius:4,background:'#2a3942'}}>Retirer</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Messages */}
-      <div style={{flex:1,overflowY:'auto',padding:'10px 12px',display:'flex',flexDirection:'column',gap:3}}>
+      <div style={{flex:1,overflowY:'auto',padding:'4px 10px',background:'#0b141a url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAACXBIWXMAAAsTAAALEwEAmpwYAAABhUlEQVR4nO3cMQ6DMBQF0fb+l0yXLB0YiN+DL+eMlgj5S7YBAAAAAAAAAAAAAAAAAAAAYOXx+/v3eo19j4+/z6/v3r9Wz/f5+0fPv9X31c8BXz/3+vvsfv7e9de97tH1euv1Vj9f/ftr7+/+e1k977f7/Pb9nG/31d+jx+rrds+r1+3u59X3s7ufveu/u7+rn1+9r7P7ee/7q+uu+3rfAQAAAAAAAAAAAAAAAAAAADjR4/cHAAAAAAAAAAAAAAAAAAAAWN/j9wcAAAAAAAAAAAAAAAAAAABY3+P3BwAAAAAAAAAAAAAAAAAAAFjf4/cHAAAAAAAAAAAAAAAAAAAAWN/j9wcAAAAAAAAAAAAAAAAAAABY3+P3BwAAAAAAAAAAAPgvTwBQSwMEFAAGAA==") repeat'}}>
         {sorted.length===0&&(
-          <div style={{textAlign:'center',padding:'48px 20px',color:'var(--muted)'}}>
-            <div style={{fontSize:40,marginBottom:8}}>💬</div>
-            <div style={{fontSize:14}}>Aucun message</div>
+          <div style={{textAlign:'center',padding:'48px 20px'}}>
+            <div style={{background:'#1d2831',borderRadius:8,padding:'10px 18px',display:'inline-block',fontSize:13,color:'#8696a0',lineHeight:1.5}}>Les messages sont protégés.</div>
           </div>
         )}
         {sorted.map((m,i)=>{
           const isMe=m.from===myRole;
+          const parsed=parseMsg(m);
           const prevMsg=i>0?sorted[i-1]:null;
           const showDate=!prevMsg||new Date(m.ts).toDateString()!==new Date(prevMsg.ts).toDateString();
           const sameSender=prevMsg&&prevMsg.from===m.from&&!showDate;
+          const isLast=!sorted[i+1]||sorted[i+1].from!==m.from;
+
           return(
             <React.Fragment key={m.id}>
               {showDate&&(
-                <div style={{textAlign:'center',padding:'10px 0 6px'}}>
-                  <span style={{fontSize:11,color:'var(--muted)',fontWeight:500,background:'rgba(0,0,0,0.04)',padding:'3px 12px',borderRadius:10}}>
-                    {new Date(m.ts).toDateString()===new Date().toDateString()?"Aujourd'hui":new Date(m.ts).toLocaleDateString('fr',{weekday:'short',day:'numeric',month:'short'})}
+                <div style={{textAlign:'center',padding:'8px 0',margin:'4px 0'}}>
+                  <span style={{fontSize:12,color:'#8696a0',background:'#1f2c34',padding:'5px 14px',borderRadius:8}}>
+                    {new Date(m.ts).toDateString()===new Date().toDateString()?"AUJOURD\u0027HUI":new Date(m.ts).toLocaleDateString('fr',{day:'numeric',month:'long',year:'numeric'}).toUpperCase()}
                   </span>
                 </div>
               )}
-              <div style={{display:'flex',justifyContent:isMe?'flex-end':'flex-start',marginTop:sameSender?1:6}}
+              <div style={{display:'flex',justifyContent:isMe?'flex-end':'flex-start',marginTop:sameSender?1:6,marginBottom:isLast?4:0,paddingLeft:isMe?48:0,paddingRight:isMe?0:48}}
                 onTouchStart={()=>startPress(m)} onTouchEnd={endPress} onTouchCancel={endPress}
                 onContextMenu={e=>{e.preventDefault();setMenuMsg(m)}}>
-                <div style={{maxWidth:'78%',position:'relative'}}>
-                  <div style={{padding:'9px 14px',borderRadius:isMe?(sameSender?'14px 4px 4px 14px':'14px 14px 4px 14px'):(sameSender?'4px 14px 14px 4px':'14px 14px 14px 4px'),background:isMe?'#111':'#fff',color:isMe?'#fff':'var(--text)',fontSize:14,lineHeight:1.5,boxShadow:isMe?'none':'0 0.5px 2px rgba(0,0,0,0.06)'}}>
-                    {m.text}
-                  </div>
-                  <div style={{display:'flex',justifyContent:isMe?'flex-end':'flex-start',alignItems:'center',gap:4,marginTop:1,padding:'0 6px'}}>
-                    <span style={{fontSize:10,color:'#aaa'}}>{fmtTime(m.ts)}</span>
-                    {isMe&&<span style={{fontSize:10,color:m.seen?'#3B82F6':'#ccc'}}>{m.seen?'✓✓':'✓'}</span>}
+                <div style={{position:'relative',maxWidth:'100%'}}>
+                  {!sameSender&&<div style={{position:'absolute',top:0,[isMe?'right':'left']:-8,width:0,height:0,borderTop:isMe?'8px solid #005c4b':'8px solid #1f2c34',[isMe?'borderLeft':'borderRight']:'8px solid transparent'}}/>}
+                  <div style={{padding:parsed.replyText?'3px 7px 5px':'5px 7px 5px',borderRadius:sameSender?8:isMe?'8px 0 8px 8px':'0 8px 8px 8px',background:isMe?'#005c4b':'#1f2c34',minWidth:85}}>
+                    {m.pinned&&(
+                      <div style={{display:'flex',alignItems:'center',gap:3,marginBottom:2}}>
+                        <svg viewBox="0 0 24 24" fill="#8696a0" style={{width:10,height:10,transform:'rotate(45deg)'}}><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+                        <span style={{fontSize:10,color:'#8696a0'}}>Épinglé</span>
+                      </div>
+                    )}
+                    {parsed.replyText&&(
+                      <div style={{padding:'5px 10px',margin:'2px 0 4px',borderRadius:7,background:'rgba(0,0,0,0.2)',borderLeft:`4px solid ${parsed.replyFrom===myRole?'#53bdeb':'#00a884'}`}}>
+                        <div style={{fontSize:12,fontWeight:600,color:parsed.replyFrom===myRole?'#53bdeb':'#00a884'}}>{parsed.replyFrom===myRole?'Toi':otherName}</div>
+                        <div style={{fontSize:13,color:'#8696a0',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',marginTop:1}}>{parsed.replyText}</div>
+                      </div>
+                    )}
+                    <div style={{padding:'0 4px'}}>
+                      <span style={{fontSize:14.2,lineHeight:'19px',color:'#e9edef',wordWrap:'break-word',whiteSpace:'pre-wrap'}}>{parsed.text}</span>
+                      <span style={{float:'right',marginLeft:12,marginTop:3,display:'inline-flex',alignItems:'center',gap:3}}>
+                        <span style={{fontSize:11,color:'rgba(255,255,255,0.45)'}}>{new Date(m.ts).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'})}</span>
+                        {isMe&&(
+                          <svg viewBox="0 0 16 11" style={{width:16,height:11}}>
+                            <path d="M11.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-2.011-2.095a.463.463 0 0 0-.336-.153.457.457 0 0 0-.339.142.477.477 0 0 0 .004.67l2.357 2.46a.465.465 0 0 0 .336.152.457.457 0 0 0 .347-.164l6.46-7.965a.477.477 0 0 0 .057-.588z" fill={m.seen?'#53bdeb':'rgba(255,255,255,0.4)'}/>
+                            {m.seen&&<path d="M7.511 8.452l.553-.68 5.947-7.322a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636" fill="#53bdeb"/>}
+                          </svg>
+                        )}
+                      </span>
+                    </div>
+                    <div style={{clear:'both'}}/>
                   </div>
                 </div>
               </div>
@@ -2124,45 +2163,43 @@ function ChatPage({isMgr}){
         <div ref={bottomRef}/>
       </div>
 
-      {/* Context menu */}
+      {/* Menu */}
       {menuMsg&&(
-        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:100,background:'rgba(0,0,0,0.3)',display:'flex',alignItems:'center',justifyContent:'center'}} onClick={()=>setMenuMsg(null)}>
-          <div style={{background:'#fff',borderRadius:16,padding:6,minWidth:180,boxShadow:'0 8px 30px rgba(0,0,0,0.2)'}} onClick={e=>e.stopPropagation()}>
-            <button onClick={()=>{setReplyTo(menuMsg);setMenuMsg(null)}} style={{width:'100%',padding:'12px 16px',textAlign:'left',fontSize:14,display:'flex',alignItems:'center',gap:10,borderRadius:10}}>
-              <span style={{fontSize:16}}>↩</span> Répondre
-            </button>
-            <button onClick={()=>copyText(menuMsg.text)} style={{width:'100%',padding:'12px 16px',textAlign:'left',fontSize:14,display:'flex',alignItems:'center',gap:10,borderRadius:10}}>
-              <span style={{fontSize:16}}>📋</span> Copier
-            </button>
-            {menuMsg.from===myRole&&(
-              <button onClick={()=>{deleteMsg(menuMsg.id);setMenuMsg(null)}} style={{width:'100%',padding:'12px 16px',textAlign:'left',fontSize:14,color:'var(--red-vivid)',display:'flex',alignItems:'center',gap:10,borderRadius:10}}>
-                <span style={{fontSize:16}}>🗑</span> Supprimer
-              </button>
-            )}
-            <button onClick={()=>setMenuMsg(null)} style={{width:'100%',padding:'12px 16px',textAlign:'left',fontSize:14,color:'var(--muted)',display:'flex',alignItems:'center',gap:10,borderRadius:10}}>
-              Annuler
-            </button>
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:100,background:'rgba(0,0,0,0.5)'}} onClick={()=>setMenuMsg(null)}>
+          <div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',background:'#233138',borderRadius:12,minWidth:220,overflow:'hidden'}} onClick={e=>e.stopPropagation()}>
+            {[
+              {label:'Répondre',action:()=>{setReplyTo({id:menuMsg.id,rawText:parseMsg(menuMsg).text,from:menuMsg.from});setMenuMsg(null);inputRef.current?.focus()}},
+              {label:'Copier',action:()=>{navigator.clipboard?.writeText(parseMsg(menuMsg).text);setMenuMsg(null)}},
+              {label:menuMsg.pinned?'Désépingler':'Épingler',action:()=>{pinMsg(menuMsg.id);setMenuMsg(null)}},
+              ...(menuMsg.from===myRole?[{label:'Supprimer',action:()=>{deleteMsg(menuMsg.id);setMenuMsg(null)},danger:true}]:[]),
+            ].map((item,idx)=>(
+              <button key={idx} onClick={item.action} style={{width:'100%',padding:'14px 20px',textAlign:'left',fontSize:16,color:item.danger?'#ef4444':'#e9edef',borderBottom:'1px solid #1a262d',background:'transparent'}}>{item.label}</button>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Reply bar */}
+      {/* Reply */}
       {replyTo&&(
-        <div style={{padding:'8px 12px',background:'#fff',borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:8}}>
-          <div style={{flex:1,padding:'6px 10px',borderRadius:8,background:'#F5F5F0',borderLeft:'3px solid var(--dark)',fontSize:12,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            ↩ {replyTo.text.slice(0,60)}{replyTo.text.length>60?'...':''}
+        <div style={{padding:'6px 8px',background:'#1f2c34',display:'flex',alignItems:'stretch',gap:8}}>
+          <div style={{flex:1,padding:'6px 12px',borderRadius:8,background:'#111b21',borderLeft:`4px solid ${replyTo.from===myRole?'#53bdeb':'#00a884'}`,overflow:'hidden'}}>
+            <div style={{fontSize:12,fontWeight:600,color:replyTo.from===myRole?'#53bdeb':'#00a884'}}>{replyTo.from===myRole?'Toi':otherName}</div>
+            <div style={{fontSize:13,color:'#8696a0',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',marginTop:1}}>{replyTo.rawText}</div>
           </div>
-          <button onClick={()=>setReplyTo(null)} style={{width:24,height:24,borderRadius:12,background:'#eee',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-            <div style={{width:12,height:12}}><I.x/></div>
+          <button onClick={()=>setReplyTo(null)} style={{width:28,display:'flex',alignItems:'center',justifyContent:'center',color:'#8696a0'}}>
+            <div style={{width:16,height:16}}><I.x/></div>
           </button>
         </div>
       )}
 
       {/* Input */}
-      <div style={{padding:'8px 12px 12px',background:'#fff',borderTop:replyTo?'none':'1px solid var(--border)',display:'flex',gap:8,alignItems:'flex-end'}}>
-        <input className="input" placeholder="Message..." value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doSend()}} style={{flex:1,borderRadius:22,padding:'11px 18px',fontSize:15}}/>
-        <button onClick={doSend} style={{width:42,height:42,borderRadius:21,background:text.trim()?'#111':'#E8E8E3',color:text.trim()?'#fff':'#bbb',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all .15s'}}>
-          <svg viewBox="0 0 24 24" fill={text.trim()?'#fff':'#bbb'} style={{width:20,height:20}}><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+      <div style={{padding:'4px 8px 6px',background:'#1f2c34',display:'flex',gap:6,alignItems:'flex-end'}}>
+        <div style={{flex:1,display:'flex',alignItems:'flex-end',background:'#2a3942',borderRadius:24,padding:'2px 12px'}}>
+          <input ref={inputRef} placeholder="Message" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doSend()}}
+            style={{flex:1,border:'none',outline:'none',fontSize:16,padding:'10px 0',fontFamily:'inherit',background:'transparent',color:'#e9edef'}}/>
+        </div>
+        <button onClick={doSend} style={{width:48,height:48,borderRadius:24,background:'#00a884',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+          <svg viewBox="0 0 24 24" fill="#111b21" style={{width:24,height:24}}><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
       </div>
     </div>

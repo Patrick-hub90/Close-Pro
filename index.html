@@ -259,6 +259,21 @@ function vibrate(pattern){
   if('vibrate' in navigator)navigator.vibrate(pattern||[200,100,200]);
 }
 
+// Notification sound (Shopify-like ding)
+function playNotifSound(){
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=ctx.createOscillator();const g=ctx.createGain();
+    osc.connect(g);g.connect(ctx.destination);
+    osc.type='sine';osc.frequency.setValueAtTime(880,ctx.currentTime);
+    osc.frequency.setValueAtTime(1100,ctx.currentTime+0.1);
+    osc.frequency.setValueAtTime(880,ctx.currentTime+0.2);
+    g.gain.setValueAtTime(0.3,ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01,ctx.currentTime+0.5);
+    osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.5);
+  }catch(e){}
+}
+
 // ============== CONTEXT ==============
 const Ctx=createContext();
 
@@ -448,6 +463,18 @@ function NotifEngine({isMgr}){
   // Request push permission on mount
   useEffect(()=>{requestPushPermission()},[]);
 
+  // Detect new orders → sound + push + vibrate
+  const prevOrderCountRef=useRef(orders.length);
+  useEffect(()=>{
+    if(orders.length>prevOrderCountRef.current){
+      const newCount=orders.length-prevOrderCountRef.current;
+      playNotifSound();
+      vibrate([200,100,200,100,200]);
+      showPush('Nouvelle commande !',`${newCount} nouvelle${newCount>1?'s':''} commande${newCount>1?'s':''} reçue${newCount>1?'s':''}`,`neworder_${Date.now()}`);
+    }
+    prevOrderCountRef.current=orders.length;
+  },[orders.length]);
+
   // Monitor timer expirations → vibrate + push for closeuse
   useEffect(()=>{
     if(isMgr)return;
@@ -464,25 +491,30 @@ function NotifEngine({isMgr}){
     if(!prevOrdersRef.current){prevOrdersRef.current=orders;return}
     const prev=prevOrdersRef.current;
     prevOrdersRef.current=orders;
+    const name=config.closeuseName||spaceCode;
+
+    // New orders
+    orders.forEach(o=>{
+      if(!prev.find(p=>p.id===o.id)){
+        sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,
+          `🆕 NOUVELLE COMMANDE\n${name}\n━━━━━━━━━━━━\nN° ${o.orderNumber}\nClient: ${o.fullName}\nProduit: ${o.productName}\nPrix: ${(o.totalPrice||0).toLocaleString()}F\nVille: ${o.city||'—'}`);
+      }
+    });
 
     orders.forEach(o=>{
       const old=prev.find(p=>p.id===o.id);
       if(!old)return;
-      // Commande confirmée
       if(old.status!==S.LIVRAISON&&o.status===S.LIVRAISON){
-        sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,`✅ ${spaceCode} — CMD ${o.orderNumber} confirmée (${o.fullName})`);
+        sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,
+          `✅ CONFIRMÉE\n${name}\n━━━━━━━━━━━━\nN° ${o.orderNumber}\nClient: ${o.fullName}\nProduit: ${o.productName}\nPrix: ${(o.pricePaid||o.totalPrice||0).toLocaleString()}F`);
       }
-      // Commande livrée
       if(old.status!==S.LIVRE&&o.status===S.LIVRE){
-        sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,`📦 ${spaceCode} — CMD ${o.orderNumber} livrée ! ${(o.pricePaid||o.totalPrice).toLocaleString()}F`);
+        sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,
+          `📦 LIVRÉE\n${name}\n━━━━━━━━━━━━\nN° ${o.orderNumber}\nClient: ${o.fullName}\nMontant: ${((o.pricePaid||o.totalPrice)*o.quantity).toLocaleString()}F`);
       }
-      // Retournement confirmée→annulée
       if(old.status===S.LIVRAISON&&o.status===S.ANNULE){
-        sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,`⚠️ ALERTE ${spaceCode} — CMD ${o.orderNumber} retournement ! Confirmée → Annulée`);
-      }
-      // Timer modifié
-      if(old.timerExp&&o.timerExp&&old.timerExp!==o.timerExp&&Math.abs(old.timerExp-o.timerExp)>60000){
-        sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,`⏱ ${spaceCode} — CMD ${o.orderNumber} timer modifié par closeuse`);
+        sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,
+          `🚨 RETOURNEMENT\n${name}\n━━━━━━━━━━━━\nN° ${o.orderNumber}\nClient: ${o.fullName}\nConfirmée puis ANNULÉE !`);
       }
     });
   },[orders]);
@@ -514,12 +546,7 @@ function NotifEngine({isMgr}){
       const expT=todayExp.reduce((s,e)=>e.amount+s,0);
       const delC=livres.reduce((s,o)=>o.deliveryCost+s,0);
       const sal=livres.length*(config.salaryPerDelivery||1000);
-      const msg=`📊 POINT ${spaceCode} — ${new Date().toLocaleDateString('fr')}\n`+
-        `Commandes: ${orders.length} | Confirmées: ${confirmed.length} | Livrées: ${livres.length}\n`+
-        `Injoignables: ${injo.length} | Annulées: ${orders.filter(o=>o.status===S.ANNULE).length}\n`+
-        `CA: ${ca.toLocaleString()}F | Livraison: ${delC.toLocaleString()}F\n`+
-        `Salaire: ${sal.toLocaleString()}F | Dépenses: ${expT.toLocaleString()}F\n`+
-        `À VERSER: ${(ca-delC-sal-expT).toLocaleString()}F`;
+      const msg=`📊 RAPPORT QUOTIDIEN\n${config.closeuseName||spaceCode}\n${new Date().toLocaleDateString('fr',{weekday:'long',day:'numeric',month:'long'})}\n━━━━━━━━━━━━\n📦 Commandes: ${orders.length}\n✅ Confirmées: ${confirmed.length}\n🚚 Livrées: ${livres.length}\n📵 Injoignables: ${injo.length}\n❌ Annulées: ${orders.filter(o=>o.status===S.ANNULE).length}\n━━━━━━━━━━━━\n💰 CA: ${ca.toLocaleString()}F\n🚛 Livraison: -${delC.toLocaleString()}F\n👩 Salaire: -${sal.toLocaleString()}F\n📎 Dépenses: -${expT.toLocaleString()}F\n━━━━━━━━━━━━\n💵 À VERSER: ${(ca-delC-sal-expT).toLocaleString()}F`;
       sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,msg);
       ss('dailySent_'+todayKey,true);
     }
@@ -982,7 +1009,7 @@ function OrdersPage(){
   const [newOrd,setNewOrd]=useState({orderNumber:'',productId:'',quantity:1,fullName:'',phone:'',whatsapp:'',address:'',city:''});
 
   const filtered=useMemo(()=>{
-    let list=filter==='all'?sorted:sorted.filter(o=>o.status===filter);
+    let list=filter==='all'?sorted:filter==='tocall'?sorted.filter(o=>o.status===S.NEW||(o.timerExp&&Date.now()>o.timerExp&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status))):sorted.filter(o=>o.status===filter);
     if(search.trim()){
       const q=search.toLowerCase();
       list=list.filter(o=>
@@ -1061,6 +1088,12 @@ function OrdersPage(){
               </div>
             )}
           </div>
+          <button onClick={()=>{
+            const toCall=sorted.filter(o=>o.status===S.NEW||(o.timerExp&&Date.now()>o.timerExp&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status)));
+            if(toCall.length>0)setSelectedId(toCall[0].id);
+          }} style={{marginTop:8,width:'100%',padding:'10px 0',borderRadius:10,background:'rgba(255,255,255,0.12)',color:'#fff',fontWeight:700,fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
+            <div style={{width:16,height:16}}><I.phone/></div> Commencer les appels ({nonAppeles.total})
+          </button>
         </div>
       )}
 
@@ -1823,29 +1856,6 @@ function ConfigPage({isManager}){
         {(!config.waTemplates||config.waTemplates.length===0)&&<div style={{padding:'12px 0',textAlign:'center',color:'var(--muted)',fontSize:13}}>Aucun message configuré</div>}
       </div>
 
-      {/* ======= MANAGER ONLY: Messages fun ======= */}
-      {isManager&&(
-        <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-            <div>
-              <div style={{fontSize:15,fontWeight:700}}>Messages fun ✨</div>
-              <div style={{fontSize:11,color:'var(--muted)'}}>Apparaissent aléatoirement sur l'écran de la closeuse</div>
-            </div>
-          </div>
-          {(config.funMessages||[]).map((m,i)=>(
-            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #f5f5f0',gap:8}}>
-              <input value={m} onChange={e=>{const msgs=[...(config.funMessages||[])];msgs[i]=e.target.value;upd('funMessages',msgs)}} style={{flex:1,border:'none',background:'transparent',fontSize:13,fontFamily:'inherit',padding:'4px 0',outline:'none'}}/>
-              <button onClick={()=>upd('funMessages',(config.funMessages||[]).filter((_,j)=>j!==i))} style={{width:22,height:22,borderRadius:6,background:'rgba(0,0,0,0.04)',color:'var(--muted)',display:'flex',alignItems:'center',justifyContent:'center',padding:0,flexShrink:0}}>
-                <div style={{width:10,height:10}}><I.x/></div>
-              </button>
-            </div>
-          ))}
-          <button onClick={()=>upd('funMessages',[...(config.funMessages||[]),'Nouveau message ici...'])} style={{width:'100%',marginTop:8,padding:'8px 0',borderRadius:10,background:'#f5f5f0',color:'var(--muted)',fontSize:12,fontWeight:600,display:'flex',alignItems:'center',justifyContent:'center',gap:4}}>
-            <div style={{width:14,height:14}}><I.plus/></div> Ajouter un message
-          </button>
-        </div>
-      )}
-
       {/* ======= CLOSEUSE + MANAGER: Grille de rémunération ======= */}
       <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,overflow:'hidden',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
         <div style={{padding:'14px 14px 8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -1982,21 +1992,21 @@ function ConfigPage({isManager}){
 }
 
 // ============== NOTIFICATION POPUP (Closeuse) ==============
-function NotificationPopup(){
+function NotificationPopup({isMgr}){
   const {messages,seenMsg,reactMsg,replyMsg,config}=useContext(Ctx);
   const [activeMsg,setActiveMsg]=useState(null);
   const [replyText,setReplyText]=useState('');
   const [showReply,setShowReply]=useState(false);
-  const unread=messages.filter(m=>m.from==='manager'&&!m.seen);
+  const otherRole=isMgr?'closeuse':'manager';
+  const unread=messages.filter(m=>m.from===otherRole&&!m.seen);
   const prevCountRef=useRef(0);
 
   useEffect(()=>{
     if(unread.length>0&&!activeMsg){
       setActiveMsg(unread[unread.length-1]);
-      // Vibrate + push only for NEW messages (not on first load)
       if(unread.length>prevCountRef.current){
         if(config.vibrateEnabled!==false)vibrate([200,100,200]);
-        if(config.pushEnabled!==false)showPush('Message du Manager',unread[unread.length-1].text,'msg_'+unread[unread.length-1].id);
+        showPush(isMgr?'Message de la closeuse':'Message du Manager',unread[unread.length-1].text,'msg_'+unread[unread.length-1].id);
       }
     }
     prevCountRef.current=unread.length;
@@ -2011,10 +2021,10 @@ function NotificationPopup(){
         <style>{`@keyframes slideDown{from{transform:translateY(-100%);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
-            <div style={{width:28,height:28,borderRadius:8,background:'linear-gradient(135deg,#111,#333)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-              <span style={{fontSize:12,fontWeight:800,color:'#fff'}}>M</span>
+            <div style={{width:28,height:28,borderRadius:8,background:isMgr?'linear-gradient(135deg,#22C55E,#16A34A)':'linear-gradient(135deg,#111,#333)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <span style={{fontSize:12,fontWeight:800,color:'#fff'}}>{isMgr?'C':'M'}</span>
             </div>
-            <span style={{fontSize:12,fontWeight:600,color:'var(--muted)'}}>Manager</span>
+            <span style={{fontSize:12,fontWeight:600,color:'var(--muted)'}}>{isMgr?config.closeuseName||'Closeuse':'Manager'}</span>
           </div>
           <span style={{fontSize:10,color:'var(--muted)'}}>{fmtTime(activeMsg.ts)}</span>
         </div>
@@ -2127,21 +2137,11 @@ function ManagerChatPage(){
         <div ref={bottomRef}/>
       </div>
 
-      {/* Quick messages */}
-      {showQuick&&(
-        <div style={{padding:'6px 12px',background:'#fff',borderTop:'1px solid var(--border)',display:'flex',gap:4,flexWrap:'wrap'}}>
-          {(config.funMessages||[]).map((m,i)=>(
-            <button key={i} onClick={()=>{setText(m);setShowQuick(false)}} style={{padding:'6px 10px',borderRadius:10,background:'#f5f5f0',fontSize:12,fontWeight:500,whiteSpace:'nowrap'}}>{m.length>25?m.slice(0,23)+'...':m}</button>
-          ))}
-        </div>
-      )}
-
       {/* Input */}
       <div style={{padding:'8px 12px 12px',background:'#fff',borderTop:'1px solid var(--border)',display:'flex',gap:8,alignItems:'flex-end'}}>
-        <button onClick={()=>setShowQuick(!showQuick)} style={{width:36,height:36,borderRadius:18,background:showQuick?'var(--dark)':'#f5f5f0',color:showQuick?'#fff':'var(--muted)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:16}}>⚡</button>
         <input className="input" placeholder="Message..." value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doSend()}} style={{flex:1,borderRadius:20,padding:'10px 16px'}}/>
-        <button onClick={doSend} style={{width:36,height:36,borderRadius:18,background:text.trim()?'var(--dark)':'#f5f5f0',color:text.trim()?'#fff':'var(--muted)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all .15s'}}>
-          <div style={{width:18,height:18}}><I.check/></div>
+        <button onClick={doSend} style={{width:40,height:40,borderRadius:20,background:text.trim()?'var(--dark)':'#E8E8E3',color:text.trim()?'#fff':'var(--muted)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all .15s'}}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{width:20,height:20}}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
     </div>
@@ -2268,9 +2268,9 @@ function ManagerDashboard(){
               <div style={{fontSize:11,fontWeight:600,marginTop:2,color:deliveryOk?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxLiv}% livraison {deliveryOk?'✓':'✗'}</div>
             </div>
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Dernière action</div>
-              <div style={{fontSize:20,fontWeight:800,letterSpacing:-0.5,marginTop:2,color:inactiveMins>=30?'var(--red-vivid)':inactiveMins>=15?'var(--amber-vivid)':'var(--green-vivid)'}}>{inactiveMins<999?`${inactiveMins} min`:'—'}</div>
-              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{inactiveMins<999?`il y a ${inactiveMins} min`:'Aucune action'}</div>
+              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Dernière activité</div>
+              <div style={{fontSize:16,fontWeight:800,letterSpacing:-0.5,marginTop:2,color:inactiveMins>=30?'var(--red-vivid)':inactiveMins>=15?'var(--amber-vivid)':'var(--green-vivid)'}}>{lastActionTime?new Date(lastActionTime).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'}):'—'}</div>
+              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{lastActionTime?new Date(lastActionTime).toLocaleDateString('fr',{day:'numeric',month:'short'}):'Aucune action'}</div>
             </div>
           </div>
 
@@ -2676,7 +2676,7 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
       {isMgr&&tab==='config'&&<ConfigPage isManager={true}/>}
 
       {/* Notification popup for closeuse only — outside of all pages */}
-      {!isMgr&&tab!=='chat'&&<NotificationPopup/>}
+      {tab!=='chat'&&<NotificationPopup isMgr={isMgr}/>}
       <NotifEngine isMgr={isMgr}/>
 
       <div className="bottom-nav">

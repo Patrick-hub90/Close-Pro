@@ -410,15 +410,18 @@ function Provider({children,spaceCode,isMgr}){
     sendPush('Nouvelle commande 📋',`${o.fullName||'Client'} — ${o.productName||'Produit'}`,spaceCode);
   },[spaceCode]);
 
-  // Import with full data (status, comments, date)
-  const importOrder=useCallback((o)=>{
+  // Import with full data (status, comments, date) — index for ordering
+  const importOrder=useCallback((o,index)=>{
     const id=gid();
     const status=o.status||S.NEW;
     const comment=o.comment||'';
-    const attempts=status!==S.NEW?[{status,ts:o.actionDate||new Date().toISOString(),comment}]:[];
-    const order={id,orderNumber:o.orderNumber||'',fullName:o.fullName||'',phone:o.phone||'',whatsapp:o.whatsapp||'',productName:o.productName||'',totalPrice:o.totalPrice||0,quantity:o.quantity||1,city:o.city||'',createdAt:o.actionDate||new Date().toISOString(),updatedAt:new Date().toISOString(),status,attempts,timerExp:null,reportDate:null,comment,pricePaid:status===S.LIVRE?o.totalPrice:null,deliveryZone:'',deliveryCost:0};
+    // Use today's date with offset so sheet order is preserved (first row = most recent)
+    const now=new Date();
+    const createdAt=new Date(now.getTime()-(index||0)*1000).toISOString();
+    const attempts=status!==S.NEW?[{status,ts:o.actionDate||createdAt,comment}]:[];
+    const order={id,orderNumber:o.orderNumber||'',fullName:o.fullName||'',phone:o.phone||'',whatsapp:o.whatsapp||'',productName:o.productName||'',totalPrice:o.totalPrice||0,quantity:o.quantity||1,city:o.city||'',createdAt,updatedAt:createdAt,status,attempts,timerExp:null,reportDate:null,comment,pricePaid:status===S.LIVRE?o.totalPrice:null,deliveryZone:'',deliveryCost:0};
     if(db)ordersRef(spaceCode).doc(id).set(order).catch(()=>{});
-    setOrders(prev=>[order,...prev]);
+    return order;
   },[spaceCode]);
 
   // Clear all orders
@@ -427,6 +430,11 @@ function Provider({children,spaceCode,isMgr}){
     setOrders([]);
     ss('orders_'+spaceCode,[]);
   },[spaceCode]);
+
+  // Batch add orders (for import)
+  const batchAddOrders=useCallback((newOrders,replace)=>{
+    setOrders(prev=>replace?[...newOrders]:[...newOrders,...prev]);
+  },[]);
 
   const addExpense=useCallback((e)=>{
     const exp={...e,id:gid(),date:new Date().toISOString()};
@@ -536,7 +544,7 @@ function Provider({children,spaceCode,isMgr}){
     return()=>unsubs.forEach(u=>u());
   },[]);
 
-  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus}}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,batchAddOrders,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus}}>{children}</Ctx.Provider>;
 }
 
 // ============== NOTIFICATION ENGINE ==============
@@ -1551,7 +1559,7 @@ function ReportPage(){
 }
 // ============== SHEET SYNC ==============
 function SheetSync({sheetUrl,sheetLabel,onClose}){
-  const {importOrder,clearAllOrders,orders,config,setConfig}=useContext(Ctx);
+  const {importOrder,clearAllOrders,batchAddOrders,orders,config,setConfig}=useContext(Ctx);
   const [status,setStatus]=useState('loading');
   const [headers,setHeaders]=useState([]);
   const [rows,setRows]=useState([]);
@@ -1594,7 +1602,12 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
         setHeaders(data.headers);setRows(data.rows);
         if(Object.keys(mapping).length===0){
           const autoMap={};
-          fields.forEach(f=>{const match=data.headers.find(h=>f.auto.some(a=>h.includes(a)));if(match)autoMap[f.key]=match});
+          fields.forEach(f=>{
+            // Try exact match first, then includes
+            let match=data.headers.find(h=>f.auto.includes(h));
+            if(!match)match=data.headers.find(h=>f.auto.some(a=>h.includes(a)));
+            if(match)autoMap[f.key]=match;
+          });
           setMapping(autoMap);
         }
         setStatus('map');
@@ -1606,7 +1619,8 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
     const existingMap={};
     if(mode==='add')orders.forEach(o=>{existingMap[o.orderNumber]=true;existingMap[o.orderNumber.replace('#','')]=true});
     let imp=0,skip=0;
-    rows.forEach(row=>{
+    const newOrders=[];
+    rows.forEach((row,idx)=>{
       const rawNum=row[mapping.orderNumber]||'';
       if(!rawNum)return;
       const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
@@ -1615,10 +1629,13 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       const comment=mapping.commentaire?row[mapping.commentaire]||'':'';
       const dateStr=mapping.date?row[mapping.date]||'':'';
       let actionDate=null;
-      if(dateStr){try{const parts=dateStr.split('/');if(parts.length===3)actionDate=new Date(parts[2],parts[1]-1,parts[0]).toISOString();else actionDate=new Date(dateStr).toISOString()}catch(e){}}
-      importOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:row[mapping.productName]||sheetLabel||'',totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||'',status:st,comment:comment,actionDate:actionDate});
+      if(dateStr){try{const parts=dateStr.split('/');if(parts.length>=3)actionDate=new Date(parts[2].length===4?parts[2]:('20'+parts[2]),parts[1]-1,parts[0]).toISOString();else actionDate=new Date(dateStr).toISOString()}catch(e){}}
+      const order=importOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:row[mapping.productName]||sheetLabel||'',totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||'',status:st,comment:comment,actionDate:actionDate},rows.length-idx);
+      newOrders.push(order);
       existingMap[orderNum]=true;imp++;
     });
+    // Batch add all orders at once (reversed so most recent first)
+    batchAddOrders(newOrders.reverse(),mode==='reset');
     setImported(imp);setSkipped(skip);
     setConfig(prev=>({...prev,sheetMappings:{...(prev.sheetMappings||{}),[sheetUrl]:mapping}}));
     setStatus('done');

@@ -529,14 +529,8 @@ function NotifEngine({isMgr}){
   // Init FCM on mount
   useEffect(()=>{if(spaceCode)initFCM(spaceCode)},[spaceCode]);
 
-  // Detect new orders → local sound only (push is sent by the device that creates the order)
-  const prevOrderCountRef=useRef(orders.length);
-  useEffect(()=>{
-    if(orders.length>prevOrderCountRef.current){
-      alert360();
-    }
-    prevOrderCountRef.current=orders.length;
-  },[orders.length]);
+  // Auto-sync Google Sheets
+  useAutoSync();
 
   // Timer expirations → sound locally + push
   useEffect(()=>{
@@ -1539,115 +1533,132 @@ function ReportPage(){
 }
 // ============== SHEET SYNC ==============
 function SheetSync({sheetUrl,sheetLabel,onClose}){
-  const {addOrder,orders}=useContext(Ctx);
+  const {addOrder,orders,config,setConfig}=useContext(Ctx);
   const [status,setStatus]=useState('loading');
   const [headers,setHeaders]=useState([]);
   const [rows,setRows]=useState([]);
-  const [mapping,setMapping]=useState({});
+  const [mapping,setMapping]=useState(()=>{
+    const saved=(config.sheetMappings||{})[sheetUrl];
+    return saved||{};
+  });
   const [imported,setImported]=useState(0);
   const [skipped,setSkipped]=useState(0);
 
   const fields=[
-    {key:'orderNumber',label:'N° commande',auto:['numéro','numero','order','n°','#','commande','order number','id commande','no']},
+    {key:'orderNumber',label:'N commande',auto:['numero','order','n','#','commande','order number','id commande','no','id']},
     {key:'fullName',label:'Nom client',auto:['nom','name','client','nom complet','full name','customer','nom du client','nom client']},
-    {key:'phone',label:'Téléphone',auto:['téléphone','telephone','phone','tel','mobile','numero telephone']},
+    {key:'phone',label:'Telephone',auto:['telephone','phone','tel','mobile','numero telephone']},
     {key:'whatsapp',label:'WhatsApp',auto:['whatsapp','wa','whats']},
     {key:'productName',label:'Produit',auto:['produit','product','article','nom produit','product name','designation']},
     {key:'totalPrice',label:'Prix',auto:['prix','price','montant','total','amount','prix total']},
-    {key:'quantity',label:'Quantité',auto:['quantité','quantite','qty','quantity','qte','nombre']},
-    {key:'city',label:'Ville',auto:['ville','city','adresse','address','localité','localite','livraison']},
+    {key:'quantity',label:'Quantite',auto:['quantite','qty','quantity','qte','nombre']},
+    {key:'city',label:'Ville',auto:['ville','city','adresse','address','localite','livraison']},
   ];
 
   useEffect(()=>{
     fetch('/api/sheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheetUrl})})
       .then(r=>r.json()).then(data=>{
-        if(data.error){setStatus('error');return}
+        if(data.error){setStatus('error:'+data.error);return}
         setHeaders(data.headers);setRows(data.rows);
-        // Auto-map columns
-        const autoMap={};
-        fields.forEach(f=>{
-          const match=data.headers.find(h=>f.auto.some(a=>h.includes(a)));
-          if(match)autoMap[f.key]=match;
-        });
-        setMapping(autoMap);
+        if(Object.keys(mapping).length===0){
+          const autoMap={};
+          fields.forEach(f=>{const match=data.headers.find(h=>f.auto.some(a=>h.includes(a)));if(match)autoMap[f.key]=match});
+          setMapping(autoMap);
+        }
         setStatus('map');
-      }).catch(()=>setStatus('error'));
+      }).catch(e=>setStatus('error:'+e.message));
   },[]);
 
   const doImport=()=>{
-    const existingNums=new Set(orders.map(o=>o.orderNumber));
+    const existingMap={};
+    orders.forEach(o=>{existingMap[o.orderNumber]=true;existingMap[o.orderNumber.replace('#','')]=true});
     let imp=0,skip=0;
     rows.forEach(row=>{
-      const orderNum=row[mapping.orderNumber]||'';
-      if(!orderNum||existingNums.has(orderNum)||existingNums.has('#'+orderNum)){skip++;return}
-      addOrder({
-        orderNumber:orderNum.startsWith('#')?orderNum:'#'+orderNum,
-        fullName:row[mapping.fullName]||'',
-        phone:row[mapping.phone]||'',
-        whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',
-        productName:row[mapping.productName]||sheetLabel||'',
-        totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,
-        quantity:Number(row[mapping.quantity])||1,
-        city:row[mapping.city]||'',
-      });
-      existingNums.add(orderNum.startsWith('#')?orderNum:'#'+orderNum);
-      imp++;
+      const rawNum=row[mapping.orderNumber]||'';
+      if(!rawNum)return;
+      const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
+      if(existingMap[orderNum]||existingMap[rawNum]){skip++;return}
+      addOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:row[mapping.productName]||sheetLabel||'',totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||''});
+      existingMap[orderNum]=true;imp++;
     });
-    setImported(imp);setSkipped(skip);setStatus('done');
+    setImported(imp);setSkipped(skip);
+    const mappings={...(config.sheetMappings||{}),[sheetUrl]:mapping};
+    setConfig(prev=>({...prev,sheetMappings:mappings}));
+    setStatus('done');
   };
 
   return(
-    <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:100,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
+    <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:100,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'flex-end'}}>
       <div style={{background:'#fff',borderRadius:'20px 20px 0 0',width:'100%',maxHeight:'85vh',overflow:'auto',padding:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-          <div style={{fontSize:16,fontWeight:700}}>Synchro — {sheetLabel}</div>
+          <div style={{fontSize:16,fontWeight:700}}>Synchro {sheetLabel}</div>
           <button onClick={onClose} style={{width:28,height:28,borderRadius:14,background:'#f0f0f0',display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{width:14,height:14}}><I.x/></div></button>
         </div>
-
-        {status==='loading'&&<div style={{padding:40,textAlign:'center',color:'var(--muted)'}}>Chargement du Google Sheet...</div>}
-        {status==='error'&&<div style={{padding:20,textAlign:'center',color:'var(--red-vivid)'}}>Impossible de lire le Sheet. Verifie que le lien est correct et que le fichier est partage en "Tout le monde avec le lien".</div>}
-
-        {status==='map'&&(
-          <>
-            <div style={{fontSize:12,color:'var(--muted)',marginBottom:12}}>{rows.length} lignes trouvees. Verifie la correspondance des colonnes :</div>
-            {fields.map(f=>(
-              <div key={f.key} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-                <span style={{fontSize:12,fontWeight:600,minWidth:90}}>{f.label}</span>
-                <select value={mapping[f.key]||''} onChange={e=>{setMapping(prev=>({...prev,[f.key]:e.target.value}))}} style={{flex:1,padding:'6px 8px',borderRadius:8,border:'1.5px solid var(--border)',fontSize:12,fontFamily:'inherit',background:'#fff'}}>
-                  <option value="">— Non mappé —</option>
-                  {headers.map(h=><option key={h} value={h}>{h}</option>)}
-                </select>
-                {mapping[f.key]&&<span style={{fontSize:10,color:'var(--green-vivid)'}}>OK</span>}
-              </div>
-            ))}
-            <div style={{background:'#f9f9f6',borderRadius:10,padding:10,marginTop:8,marginBottom:12}}>
-              <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Apercu (3 premieres lignes) :</div>
-              {rows.slice(0,3).map((r,i)=>(
-                <div key={i} style={{fontSize:11,color:'#555',padding:'4px 0',borderBottom:'1px solid #f0f0f0'}}>
-                  {mapping.orderNumber&&<span style={{fontWeight:600}}>{r[mapping.orderNumber]}</span>}
-                  {mapping.fullName&&<span> — {r[mapping.fullName]}</span>}
-                  {mapping.productName&&<span> — {r[mapping.productName]}</span>}
-                  {mapping.totalPrice&&<span> — {r[mapping.totalPrice]}F</span>}
-                </div>
-              ))}
-            </div>
-            <button onClick={doImport} disabled={!mapping.orderNumber} style={{width:'100%',padding:14,borderRadius:12,background:mapping.orderNumber?'var(--dark)':'#ddd',color:mapping.orderNumber?'#fff':'#999',fontWeight:700,fontSize:15}}>
-              Importer {rows.length} commandes
-            </button>
-          </>
-        )}
-
-        {status==='done'&&(
-          <div style={{padding:20,textAlign:'center'}}>
-            <div style={{fontSize:32,marginBottom:8}}>OK</div>
-            <div style={{fontSize:16,fontWeight:700}}>{imported} commande{imported>1?'s':''} importee{imported>1?'s':''}</div>
-            {skipped>0&&<div style={{fontSize:13,color:'var(--muted)',marginTop:4}}>{skipped} deja existante{skipped>1?'s':''} (ignorees)</div>}
-            <button onClick={onClose} style={{marginTop:16,padding:'12px 40px',borderRadius:12,background:'var(--dark)',color:'#fff',fontWeight:700,fontSize:14}}>Fermer</button>
+        {status==='loading'&&<div style={{padding:40,textAlign:'center',color:'var(--muted)'}}>Chargement...</div>}
+        {status.startsWith('error')&&<div style={{padding:20,textAlign:'center',color:'var(--red-vivid)',fontSize:13}}>{status.replace('error:','')}</div>}
+        {status==='map'&&(<>
+          <div style={{fontSize:12,color:'var(--muted)',marginBottom:12}}>{rows.length} lignes. Les commandes existantes ne seront pas modifiees.</div>
+          {fields.map(f=>(<div key={f.key} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+            <span style={{fontSize:12,fontWeight:600,minWidth:90}}>{f.label}</span>
+            <select value={mapping[f.key]||''} onChange={e=>setMapping(prev=>({...prev,[f.key]:e.target.value}))} style={{flex:1,padding:'6px 8px',borderRadius:8,border:'1.5px solid var(--border)',fontSize:12,fontFamily:'inherit',background:'#fff'}}>
+              <option value="">--</option>{headers.map(h=><option key={h} value={h}>{h}</option>)}
+            </select>
+            {mapping[f.key]&&<span style={{fontSize:10,color:'var(--green-vivid)'}}>OK</span>}
+          </div>))}
+          <div style={{background:'#f9f9f6',borderRadius:10,padding:10,margin:'8px 0 12px'}}>
+            <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Apercu :</div>
+            {rows.slice(0,3).map((r,i)=>(<div key={i} style={{fontSize:11,color:'#555',padding:'3px 0'}}>
+              {mapping.orderNumber&&<b>{r[mapping.orderNumber]}</b>}{mapping.fullName&&' - '+r[mapping.fullName]}{mapping.productName&&' - '+r[mapping.productName]}{mapping.totalPrice&&' - '+r[mapping.totalPrice]+'F'}
+            </div>))}
           </div>
-        )}
+          <button onClick={doImport} disabled={!mapping.orderNumber} style={{width:'100%',padding:14,borderRadius:12,background:mapping.orderNumber?'var(--dark)':'#ddd',color:mapping.orderNumber?'#fff':'#999',fontWeight:700,fontSize:15}}>Importer les nouvelles</button>
+        </>)}
+        {status==='done'&&(<div style={{padding:20,textAlign:'center'}}>
+          <div style={{fontSize:28,marginBottom:8}}>OK</div>
+          <div style={{fontSize:16,fontWeight:700}}>{imported} nouvelle{imported>1?'s':''}</div>
+          {skipped>0&&<div style={{fontSize:13,color:'var(--muted)',marginTop:4}}>{skipped} existante{skipped>1?'s':''}</div>}
+          <div style={{fontSize:11,color:'var(--muted)',marginTop:6}}>Mapping sauvegarde. Synchro auto toutes les 5 min.</div>
+          <button onClick={onClose} style={{marginTop:14,padding:'12px 40px',borderRadius:12,background:'var(--dark)',color:'#fff',fontWeight:700}}>Fermer</button>
+        </div>)}
       </div>
     </div>
   );
+}
+
+// Auto-sync (runs every 5 min after first manual sync)
+function useAutoSync(){
+  const {config,addOrder,orders}=useContext(Ctx);
+  const lastRef=useRef(0);
+  useEffect(()=>{
+    const run=async()=>{
+      const sheets=config.sheetUrls||[];
+      const mappings=config.sheetMappings||{};
+      if(!sheets.length)return;
+      if(Date.now()-lastRef.current<300000)return;
+      lastRef.current=Date.now();
+      for(const sh of sheets){
+        const m=mappings[sh.url];
+        if(!m||!m.orderNumber)continue;
+        try{
+          const r=await fetch('/api/sheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheetUrl:sh.url})});
+          const data=await r.json();
+          if(data.error||!data.rows)continue;
+          const existing=new Set();
+          orders.forEach(o=>{existing.add(o.orderNumber);existing.add(o.orderNumber.replace('#',''))});
+          data.rows.forEach(row=>{
+            const raw=row[m.orderNumber]||'';if(!raw)return;
+            const num=raw.startsWith('#')?raw:'#'+raw;
+            if(existing.has(num)||existing.has(raw))return;
+            addOrder({orderNumber:num,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||''});
+            existing.add(num);
+          });
+        }catch(e){}
+      }
+    };
+    run();
+    const t=setInterval(run,300000);
+    return()=>clearInterval(t);
+  },[config.sheetUrls,config.sheetMappings]);
 }
 
 function ConfigPage({isManager}){

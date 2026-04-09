@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.26';
+var APP_VERSION='v3.27';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){localStorage.clear();
   // New version detected — clear all caches
@@ -1976,7 +1976,7 @@ function AccountsManager(){
   const [accounts,setAccounts]=useState([]);
   const [newCode,setNewCode]=useState('');
   const [newName,setNewName]=useState('');
-  const [newSpace,setNewSpace]=useState('');
+
   const [editing,setEditing]=useState(null);
   const [loaded,setLoaded]=useState(false);
 
@@ -2001,14 +2001,15 @@ function AccountsManager(){
   };
 
   const addAccount=()=>{
-    const code=newCode.trim().toUpperCase();
     const name=newName.trim();
-    const space=newSpace.trim().toUpperCase()||code;
+    const code=newCode.trim().toUpperCase();
+    if(!name){alert('Nom obligatoire');return}
     if(!code){alert('Code obligatoire');return}
     if(code==='MANAGER'){alert('MANAGER est reserve');return}
     if(accounts.find(a=>a.code===code)){alert('Ce code existe deja');return}
-    saveToFirebase([...accounts,{code,name:name||code,space,createdAt:new Date().toISOString()}]);
-    setNewCode('');setNewName('');setNewSpace('');
+    if(accounts.find(a=>a.name===name)){alert('Ce nom existe deja');return}
+    saveToFirebase([...accounts,{code,name,space:name,createdAt:new Date().toISOString()}]);
+    setNewCode('');setNewName('');
   };
 
   const deleteAccount=(code)=>{
@@ -2044,13 +2045,11 @@ function AccountsManager(){
             <div style={{display:'flex',flexDirection:'column',gap:6}}>
               <div style={{fontSize:11,color:'var(--muted)'}}>Code (non modifiable)</div>
               <input className="input" value={a.code} disabled style={{fontSize:13,background:'#f5f5f0',fontWeight:700}}/>
-              <input className="input" placeholder="Nom" defaultValue={a.name} id={'edit-name-'+a.code} style={{fontSize:13}}/>
-              <input className="input" placeholder="Espace (ID interne)" defaultValue={a.space} id={'edit-space-'+a.code} style={{fontSize:13}}/>
+              <input className="input" placeholder="Nom de la closeuse" defaultValue={a.name} id={'edit-name-'+a.code} style={{fontSize:13}}/>
               <div style={{display:'flex',gap:6}}>
                 <button onClick={()=>{
                   const name=document.getElementById('edit-name-'+a.code).value.trim();
-                  const space=document.getElementById('edit-space-'+a.code).value.trim().toUpperCase();
-                  updateAccount(a.code,{name:name||a.name,space:space||a.space});
+                  updateAccount(a.code,{name:name||a.name,space:name||a.name});
                 }} style={{flex:1,padding:10,borderRadius:10,background:'var(--dark)',color:'#fff',fontWeight:600,fontSize:13}}>Sauver</button>
                 <button onClick={()=>setEditing(null)} style={{padding:10,borderRadius:10,background:'#f0f0f0',fontSize:13}}>Annuler</button>
               </div>
@@ -2061,8 +2060,8 @@ function AccountsManager(){
                 <span style={{color:'#fff',fontSize:13,fontWeight:700}}>{(a.name||a.code).charAt(0)}</span>
               </div>
               <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:700}}>{a.name||a.code}</div>
-                <div style={{fontSize:11,color:'var(--muted)'}}>Code: <b>{a.code}</b> — Espace: <b>{a.space}</b></div>
+                <div style={{fontSize:14,fontWeight:700}}>{a.name}</div>
+                <div style={{fontSize:11,color:'var(--muted)'}}>Code de connexion: <b>{a.code}</b></div>
               </div>
               <button onClick={()=>setEditing(a.code)} style={{padding:'6px 10px',borderRadius:8,background:'#f0f0f0',fontSize:11,fontWeight:600}}>Modifier</button>
               <button onClick={()=>deleteAccount(a.code)} style={{width:28,height:28,borderRadius:8,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,flexShrink:0}}>×</button>
@@ -2075,9 +2074,8 @@ function AccountsManager(){
       <div style={{marginTop:12,padding:12,background:'#f9f9f6',borderRadius:12}}>
         <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>Nouveau compte</div>
         <div style={{display:'flex',flexDirection:'column',gap:6}}>
-          <input className="input" placeholder="Code de connexion (ex: CM01)" value={newCode} onChange={e=>setNewCode(e.target.value.toUpperCase())} style={{fontSize:14,fontWeight:700,letterSpacing:2}}/>
-          <input className="input" placeholder="Nom (ex: Closeuse Cameroun)" value={newName} onChange={e=>setNewName(e.target.value)} style={{fontSize:13}}/>
-          <input className="input" placeholder="Espace / ID interne (vide = meme que code)" value={newSpace} onChange={e=>setNewSpace(e.target.value.toUpperCase())} style={{fontSize:12,color:'var(--muted)'}}/>
+          <input className="input" placeholder="Nom de la closeuse (ex: Brice Cameroun)" value={newName} onChange={e=>setNewName(e.target.value)} style={{fontSize:14,fontWeight:600}}/>
+          <input className="input" placeholder="Code de connexion (ex: CM01)" value={newCode} onChange={e=>setNewCode(e.target.value.toUpperCase())} style={{fontSize:13,letterSpacing:2}}/>
           <button onClick={addAccount} style={{padding:12,borderRadius:10,background:'var(--dark)',color:'#fff',fontWeight:700,fontSize:14}}>Ajouter le compte</button>
         </div>
       </div>
@@ -3170,14 +3168,15 @@ function SetupScreen({onCreated,onLogout}){
   },[]);
 
   const create=()=>{
-    const c=code.trim().toUpperCase();
     const n=name.trim();
+    const c=code.trim().toUpperCase();
+    if(!n){alert('Nom obligatoire');return}
     if(!c){alert('Code obligatoire');return}
     if(c==='MANAGER'){alert('MANAGER est reserve');return}
-    const newAcc={code:c,name:n||c,space:c,createdAt:new Date().toISOString()};
+    const newAcc={code:c,name:n,space:n,createdAt:new Date().toISOString()};
     const list=[...accounts,newAcc];
     if(db)db.collection('global').doc('accounts').set({list}).catch(()=>{});
-    onCreated(c);
+    onCreated(n);
   };
 
   if(loading)return(
@@ -3195,8 +3194,8 @@ function SetupScreen({onCreated,onLogout}){
       <p style={{color:'#666',fontSize:13,marginBottom:24,textAlign:'center'}}>Aucun espace configure. Cree ton premier espace pour commencer.</p>
 
       <div style={{width:'100%',maxWidth:300,display:'flex',flexDirection:'column',gap:10}}>
-        <input className="input" placeholder="Code de connexion (ex: SN01)" value={code} onChange={e=>setCode(e.target.value.toUpperCase())} style={{fontSize:16,fontWeight:700,letterSpacing:3,textAlign:'center',padding:14}}/>
-        <input className="input" placeholder="Nom (ex: Closeuse Senegal)" value={name} onChange={e=>setName(e.target.value)} style={{fontSize:14,padding:12}}/>
+        <input className="input" placeholder="Nom de la closeuse" value={name} onChange={e=>setName(e.target.value)} style={{fontSize:16,fontWeight:600,textAlign:'center',padding:14}}/>
+        <input className="input" placeholder="Code de connexion (ex: SN01)" value={code} onChange={e=>setCode(e.target.value.toUpperCase())} style={{fontSize:14,letterSpacing:3,textAlign:'center',padding:12}}/>
         <button onClick={create} style={{padding:14,borderRadius:14,background:'#fff',color:'#111',fontWeight:700,fontSize:15}}>
           Creer l'espace
         </button>
@@ -3300,17 +3299,18 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
             );
           })}
           <button onClick={()=>{
-            const name=prompt('Nom de la closeuse (ex: Marie Sénégal)');
+            const name=prompt('Nom de la closeuse (ex: Marie Senegal)');
             if(!name||!name.trim())return;
-            const id='sp_'+gid().slice(0,6);
-            const code=prompt('Code de connexion (ex: SN01)')||id;
-            const ns=[...spaces,id];
-            syncSpaces(ns);
-            const m={};
-            m[id]={name:name.trim(),code:code.trim().toUpperCase()};
-
-            setSpaces(ns);
-            changeSpace(id);
+            const code=prompt('Code de connexion (ex: SN01)');
+            if(!code||!code.trim())return;
+            const newAcc={code:code.trim().toUpperCase(),name:name.trim(),space:name.trim(),createdAt:new Date().toISOString()};
+            // Add to Firebase accounts
+            if(db)db.collection('global').doc('accounts').get().then(snap=>{
+              const list=snap.exists&&snap.data().list?snap.data().list:[];
+              list.push(newAcc);
+              db.collection('global').doc('accounts').set({list});
+            });
+            changeSpace(name.trim());
           }} style={{padding:'5px 10px',borderRadius:10,fontSize:14,background:'rgba(255,255,255,0.08)',color:'#555',flexShrink:0}}>+</button>
         </div>
       )}

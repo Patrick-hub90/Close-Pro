@@ -156,8 +156,6 @@ function getPalierFromRate(rate,grid){
 }
 
 function loadDemo(){
-  const ex=gs('orders',null);
-  if(ex&&ex.length>0)return ex;
   const raw=[
     {on:'#1659',pn:"L'Extension XXL",q:1,pp:13900,fn:'Russ Russ',ph:'237652980944',wa:'652980944',addr:'Douala',city:'Littoral'},
     {on:'#1660',pn:"L'Extension XXL",q:1,pp:13900,fn:'Vincent Hubert',ph:'237677493558',wa:'677493558',addr:'Ngaoundéré',city:'Adamawa'},
@@ -184,7 +182,6 @@ function loadDemo(){
     if(st===S.ANNULE){base.comment='Ne reconnaît pas la commande';base.attempts=[{ts:new Date(Date.now()-36e5).toISOString(),status:S.ANNULE,comment:'Ne reconnaît pas la commande'}]}
     return base;
   });
-  ss('orders',orders);
   return orders;
 }
 
@@ -225,14 +222,7 @@ function loadConfig(){
       {id:'t5',name:'Suivi livraison',situation:'suivi',text:"Bonjour {nom}, votre commande {produit} est en cours de livraison vers {ville}. Merci de rester joignable. À très bientôt !"},
     ]
   };
-  const stored=gs('config',null);
-  if(!stored)return defaults;
-  // Merge: fill missing keys from defaults (migration)
-  const merged={...defaults,...stored};
-  if(!merged.salaryGrid||!merged.salaryGrid.length)merged.salaryGrid=defaults.salaryGrid;
-  if(!merged.funMessages||!merged.funMessages.length)merged.funMessages=defaults.funMessages;
-  if(!merged.waTemplates)merged.waTemplates=defaults.waTemplates;
-  return merged;
+  return defaults;
 }
 
 // ============== ICONS ==============
@@ -406,11 +396,14 @@ function Provider({children,spaceCode,isMgr}){
       });
     },err=>console.log('Expenses offline:',err)));
 
-    // Config listener
+    // Config listener — Firebase fills gaps but NEVER overwrites local values
     unsubs.push(spaceRef(spaceCode).onSnapshot(snap=>{
       if(snap.exists){
         const d=snap.data();
-        if(d.config)setConfig(prev=>{const defaults=loadConfig();return{...defaults,...d.config}});
+        if(d.config)setConfig(prev=>{
+          // Defaults → Firebase → Local (local always wins)
+          return{...loadConfig(),...d.config,...prev};
+        });
       }
     },err=>console.log('Config offline:',err)));
 

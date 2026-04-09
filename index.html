@@ -1993,73 +1993,49 @@ function ConfigPage({isManager}){
 
 // ============== NOTIFICATION POPUP (Closeuse) ==============
 function NotificationPopup({isMgr}){
-  const {messages,seenMsg,reactMsg,replyMsg,config}=useContext(Ctx);
+  const {messages,seenMsg,config}=useContext(Ctx);
   const [activeMsg,setActiveMsg]=useState(null);
-  const [replyText,setReplyText]=useState('');
-  const [showReply,setShowReply]=useState(false);
   const otherRole=isMgr?'closeuse':'manager';
   const unread=messages.filter(m=>m.from===otherRole&&!m.seen);
   const prevCountRef=useRef(0);
+  const timerRef=useRef(null);
+
+  // Parse JSON message to extract plain text
+  const getPlainText=(m)=>{
+    try{const p=JSON.parse(m.text);return p.text||m.text}catch(e){return m.text}
+  };
 
   useEffect(()=>{
     if(unread.length>0&&!activeMsg){
-      setActiveMsg(unread[unread.length-1]);
+      const msg=unread[unread.length-1];
+      setActiveMsg(msg);
       if(unread.length>prevCountRef.current){
-        if(config.vibrateEnabled!==false)alert360(isMgr?'Nouveau message':'Nouveau message',unread[unread.length-1].text,'msg_'+unread[unread.length-1].id);
+        alert360('Nouveau message',getPlainText(msg),'msg_'+msg.id);
       }
+      // Auto-dismiss after 3 seconds
+      if(timerRef.current)clearTimeout(timerRef.current);
+      timerRef.current=setTimeout(()=>{seenMsg(msg.id);setActiveMsg(null)},3000);
     }
     prevCountRef.current=unread.length;
+    return()=>{if(timerRef.current)clearTimeout(timerRef.current)};
   },[unread.length]);
 
   if(!activeMsg)return null;
-  const emojis=['👍','❤️','😊','🙏','💪','🔥','😂','👏'];
+  const senderName=isMgr?(config.closeuseName||'Closeuse'):'Manager';
 
   return(
-    <div style={{position:'fixed',top:0,left:0,right:0,zIndex:200,padding:'8px 12px',pointerEvents:'none'}}>
-      <div style={{background:'#fff',borderRadius:16,padding:14,boxShadow:'0 8px 32px rgba(0,0,0,0.15)',border:'1.5px solid #E8E8E3',pointerEvents:'auto',animation:'slideDown .3s ease-out'}}>
+    <div style={{position:'fixed',top:8,left:8,right:8,zIndex:200,pointerEvents:'none'}}>
+      <div onClick={()=>{seenMsg(activeMsg.id);setActiveMsg(null)}} style={{background:'#fff',borderRadius:14,padding:'12px 14px',boxShadow:'0 4px 20px rgba(0,0,0,0.15)',pointerEvents:'auto',animation:'slideDown .25s ease-out',display:'flex',alignItems:'center',gap:10}}>
         <style>{`@keyframes slideDown{from{transform:translateY(-100%);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-          <div style={{display:'flex',alignItems:'center',gap:6}}>
-            <div style={{width:28,height:28,borderRadius:8,background:isMgr?'linear-gradient(135deg,#22C55E,#16A34A)':'linear-gradient(135deg,#111,#333)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-              <span style={{fontSize:12,fontWeight:800,color:'#fff'}}>{isMgr?'C':'M'}</span>
-            </div>
-            <span style={{fontSize:12,fontWeight:600,color:'var(--muted)'}}>{isMgr?config.closeuseName||'Closeuse':'Manager'}</span>
-          </div>
-          <span style={{fontSize:10,color:'var(--muted)'}}>{fmtTime(activeMsg.ts)}</span>
+        <div style={{width:36,height:36,borderRadius:18,background:isMgr?'#22C55E':'#111',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:700,color:'#fff'}}>{isMgr?'C':'M'}</span>
         </div>
-        <div style={{fontSize:15,fontWeight:500,lineHeight:1.5,marginBottom:10}}>{activeMsg.text}</div>
-
-        {/* Reactions */}
-        {!activeMsg.reaction&&!showReply&&(
-          <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-            {emojis.map(e=>(
-              <button key={e} onClick={()=>{reactMsg(activeMsg.id,e);setTimeout(()=>setActiveMsg(null),500)}} style={{width:36,height:36,borderRadius:10,background:'#f5f5f0',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}}>{e}</button>
-            ))}
-            <button onClick={()=>setShowReply(true)} style={{height:36,padding:'0 12px',borderRadius:10,background:'var(--blue-bg)',color:'var(--blue-text)',fontSize:12,fontWeight:600}}>Répondre</button>
-            <button onClick={()=>{seenMsg(activeMsg.id);setActiveMsg(null)}} style={{height:36,padding:'0 12px',borderRadius:10,background:'#f5f5f0',color:'var(--muted)',fontSize:12,fontWeight:600}}>Vu ✓</button>
-          </div>
-        )}
-        {activeMsg.reaction&&(
-          <div style={{display:'flex',alignItems:'center',gap:6}}>
-            <span style={{fontSize:24}}>{activeMsg.reaction}</span>
-            <button onClick={()=>setActiveMsg(null)} style={{padding:'6px 14px',borderRadius:10,background:'#f5f5f0',color:'var(--muted)',fontSize:12,fontWeight:600}}>Fermer</button>
-          </div>
-        )}
-        {showReply&&(
-          <div style={{display:'flex',gap:6}}>
-            <input className="input" placeholder="Ta réponse..." value={replyText} onChange={e=>setReplyText(e.target.value)} style={{flex:1,fontSize:13}} autoFocus/>
-            <button onClick={()=>{if(replyText.trim()){replyMsg(activeMsg.id,replyText);setReplyText('');setShowReply(false);setTimeout(()=>setActiveMsg(null),500)}}} style={{padding:'0 14px',borderRadius:10,background:'var(--dark)',color:'#fff',fontWeight:700}}>
-              <div style={{width:16,height:16}}><I.check/></div>
-            </button>
-          </div>
-        )}
+        <div style={{flex:1,overflow:'hidden'}}>
+          <div style={{fontSize:13,fontWeight:700,color:'#111'}}>{senderName}</div>
+          <div style={{fontSize:13,color:'#555',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{getPlainText(activeMsg)}</div>
+        </div>
+        <span style={{fontSize:10,color:'#aaa',flexShrink:0}}>{fmtTime(activeMsg.ts)}</span>
       </div>
-      {/* Unread badge */}
-      {unread.length>1&&(
-        <div style={{textAlign:'center',marginTop:6,pointerEvents:'auto'}}>
-          <span style={{fontSize:11,color:'var(--muted)',background:'#fff',padding:'2px 10px',borderRadius:10,boxShadow:'0 2px 8px rgba(0,0,0,0.1)'}}>+{unread.length-1} autre{unread.length>2?'s':''} message{unread.length>2?'s':''}</span>
-        </div>
-      )}
     </div>
   );
 }

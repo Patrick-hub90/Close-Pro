@@ -1725,36 +1725,93 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
 }
 
 function useAutoSync(){
-  const {config,addOrder,orders}=useContext(Ctx);
+  const {config,orders,importOrder,batchAddOrders,clearAllOrders}=useContext(Ctx);
   const lastRef=useRef(0);
+  const syncingRef=useRef(false);
+  const ordersRef2=useRef(orders);
+  ordersRef2.current=orders;
+
+  const mapStatus=(txt)=>{
+    if(!txt)return null; // null = no status in sheet, keep app status
+    const t=txt.toLowerCase().trim();
+    if(!t)return null;
+    if(t.includes('livraison en cours')||t.includes('confirme'))return 'livraison';
+    if(t.includes('livre')||t.includes('delivered'))return 'livre';
+    if(t.includes('injoignable'))return 'injoignable';
+    if(t.includes('rappel'))return 'rappele';
+    if(t.includes('report'))return 'reporte';
+    if(t.includes('annul'))return 'annule';
+    return null;
+  };
+
   useEffect(()=>{
     const run=async()=>{
+      if(syncingRef.current)return;
       const sheets=config.sheetUrls||[];
       const mappings=config.sheetMappings||{};
       if(!sheets.length)return;
       if(Date.now()-lastRef.current<30000)return;
       lastRef.current=Date.now();
-      for(const sh of sheets){
-        const m=mappings[sh.url];
-        if(!m||!m.orderNumber||!m._tab)continue;
-        try{
+      syncingRef.current=true;
+
+      try{
+        for(const sh of sheets){
+          const m=mappings[sh.url];
+          if(!m||!m.orderNumber||!m._tab)continue;
+
           const r=await fetch('/api/sheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheetUrl:sh.url,sheetName:m._tab})});
           const data=await r.json();
           if(data.error||!data.rows)continue;
-          const existing=new Set();
-          orders.forEach(o=>{existing.add(o.orderNumber);existing.add(o.orderNumber.replace('#',''))});
-          data.rows.forEach(row=>{
-            const raw=row[m.orderNumber]||'';if(!raw)return;
-            const num=raw.startsWith('#')?raw:'#'+raw;
-            if(existing.has(num)||existing.has(raw))return;
-            addOrder({orderNumber:num,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||''});
-            existing.add(num);
+
+          // Build map of existing app orders by orderNumber
+          const appMap={};
+          ordersRef2.current.forEach(o=>{appMap[o.orderNumber]=o;appMap[o.orderNumber.replace('#','')]=o});
+
+          // Build new orders list from Sheet (Sheet = source of truth)
+          const newOrders=[];
+          data.rows.forEach((row,idx)=>{
+            const rawNum=row[m.orderNumber]||'';
+            if(!rawNum)return;
+            const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
+            const existing=appMap[orderNum]||appMap[rawNum];
+            const sheetStatus=m.statut?mapStatus(row[m.statut]):null;
+            const comment=m.commentaire?row[m.commentaire]||'':'';
+            const dateStr=m.date?row[m.date]||'':'';
+            let actionDate=null;
+            if(dateStr){try{const p=dateStr.split('/');if(p.length>=3)actionDate=new Date(p[2].length===4?p[2]:('20'+p[2]),p[1]-1,p[0]).toISOString()}catch(e){}}
+
+            if(existing){
+              // Update existing: Sheet data wins, but keep app status if Sheet has none
+              const updated={...existing,
+                fullName:row[m.fullName]||existing.fullName,
+                phone:row[m.phone]||existing.phone,
+                whatsapp:row[m.whatsapp]||row[m.phone]||existing.whatsapp,
+                productName:row[m.productName]||existing.productName,
+                totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||existing.totalPrice,
+                quantity:Number(row[m.quantity])||existing.quantity,
+                city:row[m.city]||existing.city,
+              };
+              if(sheetStatus)updated.status=sheetStatus;
+              if(comment)updated.comment=comment;
+              newOrders.push(updated);
+            }else{
+              // New order from Sheet
+              const now=new Date();
+              const createdAt=new Date(now.getTime()-(data.rows.length-idx)*1000).toISOString();
+              const status=sheetStatus||'new';
+              const attempts=status!=='new'?[{status,ts:actionDate||createdAt,comment}]:[];
+              newOrders.push({id:('s'+Math.random().toString(36).slice(2,10)),orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',createdAt,updatedAt:createdAt,status,attempts,timerExp:null,reportDate:null,comment,pricePaid:status==='livre'?Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0:null,deliveryZone:'',deliveryCost:0});
+            }
           });
-        }catch(e){}
-      }
+
+          // Replace all orders with Sheet data (Sheet is master)
+          if(newOrders.length>0)batchAddOrders(newOrders.reverse(),true);
+        }
+      }catch(e){}
+      syncingRef.current=false;
     };
-    run();
     const t=setInterval(run,30000);
+    run();
     return()=>clearInterval(t);
   },[config.sheetUrls,config.sheetMappings]);
 }

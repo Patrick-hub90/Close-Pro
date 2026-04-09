@@ -29,10 +29,29 @@ module.exports = async (req, res) => {
       tokens.map(token =>
         admin.messaging().send({
           token,
-          notification: { title, body: body || '' },
-          data: { title, body: body || '', tag: 'closepro-' + Date.now() },
-          android: { priority: 'high', notification: { sound: 'default', channelId: 'closepro' } },
-          webpush: { headers: { Urgency: 'high' }, notification: { requireInteraction: 'true', vibrate: [200, 100, 200] } }
+          data: { title: title || '', body: body || '', tag: 'closepro-' + Date.now() },
+          android: {
+            priority: 'high',
+            notification: {
+              title: title || 'ClosePro',
+              body: body || '',
+              sound: 'default',
+              channelId: 'closepro_alerts',
+              defaultVibrateTimings: false,
+              vibrateTimingsMillis: [0, 300, 150, 300, 150, 300]
+            }
+          },
+          webpush: {
+            headers: { Urgency: 'high', TTL: '86400' },
+            notification: {
+              title: title || 'ClosePro',
+              body: body || '',
+              requireInteraction: true,
+              vibrate: [300, 150, 300, 150, 300],
+              tag: 'closepro-' + Date.now(),
+              renotify: true
+            }
+          }
         }).catch(() => null)
       )
     );

@@ -1146,6 +1146,14 @@ function OrdersPage({isMgr}){
         <div style={{padding:'14px 16px 8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div>
             <h1 style={{fontSize:22,fontWeight:700,letterSpacing:-0.5}}>Commandes</h1>
+            {window.__syncStatus&&window.__syncStatus.sheets>0&&(
+              <div style={{display:'flex',alignItems:'center',gap:4,marginTop:2}}>
+                <div style={{width:6,height:6,borderRadius:3,background:window.__syncStatus.active?'var(--amber-vivid)':'var(--green-vivid)',animation:window.__syncStatus.active?'pulse 1s infinite':''}}/>
+                <span style={{fontSize:10,color:'var(--muted)'}}>
+                  {window.__syncStatus.active?'Synchro...':window.__syncStatus.lastSync?'Synchro '+Math.round((Date.now()-window.__syncStatus.lastSync)/1000)+'s':'En attente'}
+                </span>
+              </div>
+            )}
           </div>
           <div style={{display:'flex',alignItems:'center',gap:8}}>
             {isMgr&&<button onClick={()=>{setSelectMode(!selectMode);setSelected(new Set())}} style={{height:34,padding:'0 12px',borderRadius:10,background:selectMode?'var(--red-vivid)':'#f0f0f0',color:selectMode?'#fff':'var(--muted)',fontSize:12,fontWeight:600}}>{selectMode?'Annuler':'Sélectionner'}</button>}
@@ -1784,7 +1792,13 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
     });
     batchAddOrders(newOrders.reverse(),mode==='reset');
     setImported(imp);setSkipped(skip);
-    setConfig(prev=>({...prev,sheetMappings:{...(prev.sheetMappings||{}),[sheetUrl]:mapping}}));
+    // Save mapping AND make sure URL is in sheetUrls
+    setConfig(prev=>{
+      const mappings={...(prev.sheetMappings||{}),[sheetUrl]:mapping};
+      const urls=[...(prev.sheetUrls||[])];
+      if(!urls.find(s=>s.url===sheetUrl))urls.push({label:sheetLabel,url:sheetUrl});
+      return{...prev,sheetMappings:mappings,sheetUrls:urls};
+    });
     setStep('done');
   };
 
@@ -1848,6 +1862,9 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
   );
 }
 
+// Global sync status
+window.__syncStatus={lastSync:0,active:false,sheets:0,newFound:0};
+
 function useAutoSync(){
   const {config,orders,importOrder,batchAddOrders}=useContext(Ctx);
   const lastRef=useRef(0);
@@ -1860,12 +1877,15 @@ function useAutoSync(){
       if(syncingRef.current)return;
       const sheets=config.sheetUrls||[];
       const mappings=config.sheetMappings||{};
-      if(!sheets.length)return;
+      if(!sheets.length){window.__syncStatus.sheets=0;return}
       if(Date.now()-lastRef.current<30000)return;
       lastRef.current=Date.now();
       syncingRef.current=true;
+      window.__syncStatus.active=true;
+      window.__syncStatus.sheets=sheets.filter(s=>mappings[s.url]&&mappings[s.url]._tab).length;
 
       try{
+        let totalNew=0;
         for(const sh of sheets){
           const m=mappings[sh.url];
           if(!m||!m.orderNumber||!m._tab)continue;
@@ -1873,7 +1893,6 @@ function useAutoSync(){
           const data=await r.json();
           if(data.error||!data.rows)continue;
 
-          // Only add NEW orders (app is master — never touch existing)
           const existing=new Set();
           ordersRef2.current.forEach(o=>{existing.add(o.orderNumber);existing.add(o.orderNumber.replace('#',''))});
           const newOrders=[];
@@ -1888,13 +1907,16 @@ function useAutoSync(){
             const order=importOrder({orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',status:st,comment:comment},data.rows.length-idx);
             newOrders.push(order);existing.add(orderNum);
           });
-          if(newOrders.length>0)batchAddOrders(newOrders.reverse(),false);
+          if(newOrders.length>0){batchAddOrders(newOrders.reverse(),false);totalNew+=newOrders.length}
         }
+        window.__syncStatus.lastSync=Date.now();
+        window.__syncStatus.newFound=totalNew;
       }catch(e){}
       syncingRef.current=false;
+      window.__syncStatus.active=false;
     };
     const t=setInterval(run,30000);
-    setTimeout(run,5000); // First sync after 5s
+    setTimeout(run,3000);
     return()=>clearInterval(t);
   },[config.sheetUrls,config.sheetMappings]);
 }

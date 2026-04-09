@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.19';
+var APP_VERSION='v3.21';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   // New version detected — clear all caches
@@ -370,10 +370,10 @@ function msgsRef(code){return db?spaceRef(code).collection('messages'):null}
 function expRef(code){return db?spaceRef(code).collection('expenses'):null}
 
 function Provider({children,spaceCode,isMgr}){
-  const [orders,setOrders]=useState(()=>{const stored=gs('orders_'+spaceCode,null);return stored&&stored.length>0?dedup(stored.map(normalizeOrder)):loadDemo()});
-  const [config,setConfig]=useState(()=>{const stored=gs('config_'+spaceCode,null);return stored?{...loadConfig(),...stored}:loadConfig()});
-  const [expenses,setExpenses]=useState(()=>gs('expenses_'+spaceCode,[]));
-  const [messages,setMessages]=useState(()=>gs('messages_'+spaceCode,[]));
+  const [orders,setOrders]=useState([]);
+  const [config,setConfig]=useState(loadConfig());
+  const [expenses,setExpenses]=useState([]);
+  const [messages,setMessages]=useState([]);
   const [now,setNow]=useState(Date.now());
   const [fbReady,setFbReady]=useState(false);
 
@@ -382,11 +382,10 @@ function Provider({children,spaceCode,isMgr}){
   useEffect(()=>{
     if(prevSpace.current!==spaceCode){
       prevSpace.current=spaceCode;
-      const stored=gs('orders_'+spaceCode,null);
-      setOrders(stored&&stored.length>0?stored:[]);
-      setConfig(()=>{const s=gs('config_'+spaceCode,null);return s?{...loadConfig(),...s}:loadConfig()});
-      setExpenses(gs('expenses_'+spaceCode,[]));
-      setMessages(gs('messages_'+spaceCode,[]));
+      setOrders([]);
+      setConfig(loadConfig());
+      setExpenses([]);
+      setMessages([]);
       setFbReady(false);
     }
   },[spaceCode]);
@@ -394,11 +393,7 @@ function Provider({children,spaceCode,isMgr}){
   // Timer
   useEffect(()=>{const t=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(t)},[]);
 
-  // Cache to localStorage
-  useEffect(()=>{ss('orders_'+spaceCode,orders)},[orders,spaceCode]);
-  useEffect(()=>{ss('config_'+spaceCode,config)},[config,spaceCode]);
-  useEffect(()=>{ss('expenses_'+spaceCode,expenses)},[expenses,spaceCode]);
-  useEffect(()=>{ss('messages_'+spaceCode,messages)},[messages,spaceCode]);
+  // All data in Firebase — no localStorage cache
 
   // Firebase real-time listeners
   useEffect(()=>{
@@ -503,7 +498,6 @@ function Provider({children,spaceCode,isMgr}){
       }).catch(()=>{});
     }
     setOrders([]);
-    ss('orders_'+spaceCode,[]);
     setTimeout(()=>{suppressRef.current=false},5000);
   },[spaceCode]);
 
@@ -668,13 +662,13 @@ function Provider({children,spaceCode,isMgr}){
   },[orders,expenses,config]);
 
   // Heartbeat — only closeuse writes (not manager viewing)
-  const [lastSeen,setLastSeen]=useState(()=>gs('lastSeen_'+spaceCode,0));
+  const [lastSeen,setLastSeen]=useState(0);
   useEffect(()=>{
     if(isMgr)return;
     const beat=()=>{
       const ts=Date.now();
       setLastSeen(ts);
-      ss('lastSeen_'+spaceCode,ts);
+      // lastSeen stored in Firebase only
       if(db)spaceRef(spaceCode).set({lastSeen:ts},{merge:true}).catch(()=>{});
     };
     beat();
@@ -686,7 +680,7 @@ function Provider({children,spaceCode,isMgr}){
   const [spacesStatus,setSpacesStatus]=useState({});
   useEffect(()=>{
     if(!db)return;
-    const allSpaces=gs('spaces',[spaceCode]);
+    const allSpaces=[spaceCode]; // Only listen to current space
     const unsubs=allSpaces.map(s=>
       db.collection('spaces').doc(s).onSnapshot(snap=>{
         if(snap.exists){
@@ -704,7 +698,7 @@ function Provider({children,spaceCode,isMgr}){
 // ============== NOTIFICATION ENGINE ==============
 function NotifEngine({isMgr}){
   const {orders,config,now,expenses,spaceCode}=useContext(Ctx);
-  const dailySentRef=useRef(gs('dailySent_'+new Date().toDateString(),false));
+  const dailySentRef=useRef(false);
 
   // Init FCM on mount
   useEffect(()=>{if(spaceCode)initFCM(spaceCode)},[spaceCode]);
@@ -726,7 +720,7 @@ function NotifEngine({isMgr}){
     if(!config.whatsappPhone||!config.whatsappApiKey)return;
     const h=new Date().getHours();
     const todayKey=new Date().toDateString();
-    if(h>=(config.dailyReportHour||20)&&!gs('dailySent_'+todayKey,false)){
+    if(h>=(config.dailyReportHour||20)&&!dailySentRef.current){
       const livres=orders.filter(o=>o.status===S.LIVRE);
       const confirmed=orders.filter(o=>[S.LIVRAISON,S.LIVRE].includes(o.status));
       const injo=orders.filter(o=>o.status===S.INJOIGNABLE);
@@ -738,7 +732,7 @@ function NotifEngine({isMgr}){
       const sal=livres.length*(config.salaryPerDelivery||1000);
       const msg=`Rapport du jour\n${config.closeuseName||spaceCode}\n${new Date().toLocaleDateString('fr',{day:'numeric',month:'long'})}\n\nCommandes: ${orders.length}\nConfirmees: ${confirmed.length}\nLivrees: ${livres.length}\nInjoignables: ${injo.length}\nAnnulees: ${orders.filter(o=>o.status===S.ANNULE).length}\n\nCA: ${ca.toLocaleString()}F\nLivraison: -${delC.toLocaleString()}F\nSalaire: -${sal.toLocaleString()}F\nDepenses: -${expT.toLocaleString()}F\nA verser: ${(ca-delC-sal-expT).toLocaleString()}F`;
       sendWhatsApp(config.whatsappPhone,config.whatsappApiKey,msg);
-      ss('dailySent_'+todayKey,true);
+      dailySentRef.current=true;
     }
   },[now]);
 
@@ -2032,26 +2026,26 @@ function AccountsManager(){
   const [newName,setNewName]=useState('');
   const [newSpace,setNewSpace]=useState('');
   const [editing,setEditing]=useState(null);
+  const [loaded,setLoaded]=useState(false);
 
-  // Load from Firebase
+  // Load from Firebase + auto-migrate from old system
   useEffect(()=>{
-    if(!db)return;
+    if(!db){setLoaded(true);return}
     const unsub=db.collection('global').doc('accounts').onSnapshot(snap=>{
-      if(snap.exists&&snap.data().list)setAccounts(snap.data().list);
-    });
+      if(snap.exists&&snap.data().list&&snap.data().list.length>0){
+        setAccounts(snap.data().list);
+      }else{
+        // Auto-migrate: read old spaces + metadata and create accounts
+        // No accounts yet — manager needs to create them
+      }
+      setLoaded(true);
+    },()=>{setLoaded(true)});
     return()=>unsub();
   },[]);
 
   const saveToFirebase=(list)=>{
     setAccounts(list);
-    ss('accounts',list);
-    if(db)db.collection('global').doc('accounts').set({list},{merge:true}).catch(()=>{});
-    // Also update spaces
-    const spaceList=[...new Set(list.map(a=>a.space))];
-    ss('spaces',spaceList);
-    const meta={};
-    list.forEach(a=>{meta[a.space]={name:a.name,code:a.code}});
-    ss('spacesMeta',meta);
+    if(db)db.collection('global').doc('accounts').set({list}).catch(()=>{});
   };
 
   const addAccount=()=>{
@@ -2077,50 +2071,66 @@ function AccountsManager(){
 
   return(
     <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-      <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Comptes ({accounts.length})</div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <div style={{fontSize:15,fontWeight:700}}>Comptes</div>
+        <span style={{fontSize:12,color:'var(--muted)',fontWeight:600}}>{accounts.length} compte{accounts.length>1?'s':''}</span>
+      </div>
+
+      {!loaded&&<div style={{padding:20,textAlign:'center',color:'var(--muted)',fontSize:13}}>Chargement...</div>}
 
       {/* Existing accounts */}
+      {accounts.length===0&&loaded&&(
+        <div style={{padding:16,textAlign:'center',background:'#f9f9f6',borderRadius:10,marginBottom:12}}>
+          <div style={{fontSize:13,color:'var(--muted)'}}>Aucun compte pour le moment</div>
+          <div style={{fontSize:11,color:'var(--muted)',marginTop:4}}>Cree un compte ci-dessous pour que la closeuse puisse se connecter</div>
+        </div>
+      )}
+
       {accounts.map(a=>(
         <div key={a.code} style={{padding:'10px 0',borderBottom:'1px solid #f5f5f0'}}>
           {editing===a.code?(
             <div style={{display:'flex',flexDirection:'column',gap:6}}>
-              <input className="input" value={a.code} disabled style={{fontSize:12,background:'#f5f5f0'}}/>
-              <input className="input" placeholder="Nom" defaultValue={a.name} id={'edit-name-'+a.code} style={{fontSize:12}}/>
-              <input className="input" placeholder="Espace (ID interne)" defaultValue={a.space} id={'edit-space-'+a.code} style={{fontSize:12}}/>
+              <div style={{fontSize:11,color:'var(--muted)'}}>Code (non modifiable)</div>
+              <input className="input" value={a.code} disabled style={{fontSize:13,background:'#f5f5f0',fontWeight:700}}/>
+              <input className="input" placeholder="Nom" defaultValue={a.name} id={'edit-name-'+a.code} style={{fontSize:13}}/>
+              <input className="input" placeholder="Espace (ID interne)" defaultValue={a.space} id={'edit-space-'+a.code} style={{fontSize:13}}/>
               <div style={{display:'flex',gap:6}}>
                 <button onClick={()=>{
                   const name=document.getElementById('edit-name-'+a.code).value.trim();
                   const space=document.getElementById('edit-space-'+a.code).value.trim().toUpperCase();
                   updateAccount(a.code,{name:name||a.name,space:space||a.space});
-                }} style={{flex:1,padding:8,borderRadius:8,background:'var(--dark)',color:'#fff',fontWeight:600,fontSize:12}}>Sauver</button>
-                <button onClick={()=>setEditing(null)} style={{padding:8,borderRadius:8,background:'#f0f0f0',fontSize:12}}>Annuler</button>
+                }} style={{flex:1,padding:10,borderRadius:10,background:'var(--dark)',color:'#fff',fontWeight:600,fontSize:13}}>Sauver</button>
+                <button onClick={()=>setEditing(null)} style={{padding:10,borderRadius:10,background:'#f0f0f0',fontSize:13}}>Annuler</button>
               </div>
             </div>
           ):(
             <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div style={{width:36,height:36,borderRadius:10,background:'var(--dark)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <span style={{color:'#fff',fontSize:13,fontWeight:700}}>{(a.name||a.code).charAt(0)}</span>
+              </div>
               <div style={{flex:1}}>
                 <div style={{fontSize:14,fontWeight:700}}>{a.name||a.code}</div>
                 <div style={{fontSize:11,color:'var(--muted)'}}>Code: <b>{a.code}</b> — Espace: <b>{a.space}</b></div>
               </div>
-              <button onClick={()=>setEditing(a.code)} style={{padding:'4px 10px',borderRadius:6,background:'#f0f0f0',fontSize:11,fontWeight:600}}>Modifier</button>
-              <button onClick={()=>deleteAccount(a.code)} style={{padding:'4px 10px',borderRadius:6,background:'var(--red-bg)',color:'var(--red-vivid)',fontSize:11,fontWeight:600}}>X</button>
+              <button onClick={()=>setEditing(a.code)} style={{padding:'6px 10px',borderRadius:8,background:'#f0f0f0',fontSize:11,fontWeight:600}}>Modifier</button>
+              <button onClick={()=>deleteAccount(a.code)} style={{width:28,height:28,borderRadius:8,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,flexShrink:0}}>×</button>
             </div>
           )}
         </div>
       ))}
 
       {/* Add new account */}
-      <div style={{marginTop:12,padding:12,background:'#f9f9f6',borderRadius:10}}>
-        <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>Nouveau compte</div>
+      <div style={{marginTop:12,padding:12,background:'#f9f9f6',borderRadius:12}}>
+        <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>Nouveau compte</div>
         <div style={{display:'flex',flexDirection:'column',gap:6}}>
-          <input className="input" placeholder="Code de connexion (ex: CM01)" value={newCode} onChange={e=>setNewCode(e.target.value.toUpperCase())} style={{fontSize:13,fontWeight:700,letterSpacing:2}}/>
-          <input className="input" placeholder="Nom (ex: Closeuse Cameroun)" value={newName} onChange={e=>setNewName(e.target.value)} style={{fontSize:12}}/>
-          <input className="input" placeholder="Espace / ID interne (vide = meme que code)" value={newSpace} onChange={e=>setNewSpace(e.target.value.toUpperCase())} style={{fontSize:12}}/>
+          <input className="input" placeholder="Code de connexion (ex: CM01)" value={newCode} onChange={e=>setNewCode(e.target.value.toUpperCase())} style={{fontSize:14,fontWeight:700,letterSpacing:2}}/>
+          <input className="input" placeholder="Nom (ex: Closeuse Cameroun)" value={newName} onChange={e=>setNewName(e.target.value)} style={{fontSize:13}}/>
+          <input className="input" placeholder="Espace / ID interne (vide = meme que code)" value={newSpace} onChange={e=>setNewSpace(e.target.value.toUpperCase())} style={{fontSize:12,color:'var(--muted)'}}/>
           <button onClick={addAccount} style={{padding:12,borderRadius:10,background:'var(--dark)',color:'#fff',fontWeight:700,fontSize:14}}>Ajouter le compte</button>
         </div>
       </div>
 
-      <p style={{fontSize:10,color:'var(--muted)',marginTop:8}}>MANAGER se connecte toujours avec "MANAGER". Les comptes sont synchronises sur tous les appareils via Firebase.</p>
+      <p style={{fontSize:10,color:'var(--muted)',marginTop:10,lineHeight:1.5}}>Le MANAGER se connecte toujours avec "MANAGER". Les comptes sont synchronises sur tous les appareils.</p>
     </div>
   );
 }
@@ -2258,11 +2268,7 @@ function ConfigPage({isManager}){
               const newConfig={...config,closeuseCode:newCode,closeuseName:newName,country:profCountry,sheetUrls:profSheet};
               setConfig(newConfig);
               // Explicitly write to localStorage so Login can read it
-              ss('config_'+spaceCode,newConfig);
-              // Update space metadata
-              const meta=gs('spacesMeta',{});
-              meta[spaceCode]={name:newName,code:newCode};
-              ss('spacesMeta',meta);if(db)db.collection('global').doc('spaces').set({meta},{merge:true}).catch(()=>{});
+              // Config synced to Firebase via setConfigAndSync
               alert('Profil enregistré — code de connexion : '+newCode);
             }} style={{padding:12,borderRadius:12,background:'var(--dark)',color:'#fff',fontWeight:700,fontSize:14}}>Enregistrer le profil</button>
           </div>
@@ -2574,13 +2580,13 @@ function ConfigPage({isManager}){
       {/* ======= MANAGER ONLY: Données ======= */}
       {isManager&&(
         <div style={{margin:'8px 12px 20px',display:'flex',flexDirection:'column',gap:8}}>
-          <button onClick={()=>{ss('loginAttempts',[]);ss('securityAlerts',[]);ss('forceUnblock',Date.now());alert('Connexions débloquées — la closeuse peut réessayer')}} style={{width:'100%',padding:14,background:'var(--amber-bg)',color:'var(--amber-text)',borderRadius:14,fontWeight:700,fontSize:14,border:'1.5px solid #FDE68A'}}>
+          <button onClick={()=>{if(db)db.collection('global').doc('loginBlock').set({unblocked:Date.now()}).catch(()=>{});alert('Connexions débloquées')}} style={{width:'100%',padding:14,background:'var(--amber-bg)',color:'var(--amber-text)',borderRadius:14,fontWeight:700,fontSize:14,border:'1.5px solid #FDE68A'}}>
             Débloquer les connexions
           </button>
           <button onClick={()=>{if(confirm('Supprimer les '+orders.length+' commandes ? Les statuts et commentaires seront perdus.')){clearAllOrders();alert('Commandes supprimées')}}} style={{width:'100%',padding:14,background:'#fff',color:'var(--red-vivid)',borderRadius:14,fontWeight:700,fontSize:14,border:'1.5px solid #FECACA'}}>
             Supprimer toutes les commandes ({orders.length})
           </button>
-          <button onClick={()=>{if(confirm('Supprimer TOUTES les données ? Cette action est irréversible.')){localStorage.clear();window.location.reload()}}} style={{width:'100%',padding:14,background:'var(--red-bg)',color:'var(--red-vivid)',borderRadius:14,fontWeight:700,fontSize:14,border:'1.5px solid #FECACA'}}>
+          <button onClick={()=>{if(confirm('Supprimer TOUTES les données Firebase ? Irreversible.')){if(db){ordersRef(spaceCode).get().then(s=>s.forEach(d=>d.ref.delete()));msgsRef(spaceCode).get().then(s=>s.forEach(d=>d.ref.delete()));expRef(spaceCode).get().then(s=>s.forEach(d=>d.ref.delete()));spaceRef(spaceCode).delete()}window.location.reload()}}} style={{width:'100%',padding:14,background:'var(--red-bg)',color:'var(--red-vivid)',borderRadius:14,fontWeight:700,fontSize:14,border:'1.5px solid #FECACA'}}>
             Réinitialiser toutes les données
           </button>
         </div>
@@ -2889,7 +2895,7 @@ function ManagerDashboard(){
       )}
 
       {/* Security alerts */}
-      {(()=>{const alerts=gs('securityAlerts',[]);const recent=alerts.filter(a=>Date.now()-a.ts<864e5);return recent.length>0?(
+      {(()=>{return false?(
         <div style={{padding:'4px 12px'}}>
           <div style={{padding:'10px 12px',borderRadius:12,background:'#1a1a1a',border:'1.5px solid #333',display:'flex',alignItems:'center',gap:8}}>
             <div style={{width:18,height:18,color:'#F59E0B'}}><I.eye/></div>
@@ -2897,7 +2903,7 @@ function ManagerDashboard(){
               <div style={{fontSize:13,fontWeight:700,color:'#F59E0B'}}>{recent.length} tentative{recent.length>1?'s':''} de connexion bloquée{recent.length>1?'s':''}</div>
               <div style={{fontSize:11,color:'#888',marginTop:2}}>Dernier code essayé : {recent[recent.length-1].lastCode} — {new Date(recent[recent.length-1].ts).toLocaleString('fr')}</div>
             </div>
-            <button onClick={()=>{ss('securityAlerts',[]);window.location.reload()}} style={{padding:'4px 10px',borderRadius:6,background:'#333',color:'#888',fontSize:10,fontWeight:600}}>OK</button>
+            <button onClick={()=>window.location.reload()} style={{padding:'4px 10px',borderRadius:6,background:'#333',color:'#888',fontSize:10,fontWeight:600}}>OK</button>
           </div>
         </div>
       ):null})()}
@@ -3111,22 +3117,21 @@ function Login({onLogin}){
   useEffect(()=>{
     if(!db){
       // No Firebase — fallback to localStorage
-      setAccounts(gs('accounts',[]));
+      setAccounts([]);
       return;
     }
     const unsub=db.collection('global').doc('accounts').onSnapshot(snap=>{
       if(snap.exists&&snap.data().list){
         const list=snap.data().list;
-        ss('accounts',list); // Cache locally
+
         setAccounts(list);
       }else{
         // No accounts in Firebase — check localStorage
-        const local=gs('accounts',[]);
-        setAccounts(local);
+        setAccounts([]);
       }
     },()=>{
       // Offline — use localStorage
-      setAccounts(gs('accounts',[]));
+      setAccounts([]);
     });
     return()=>unsub();
   },[]);
@@ -3134,9 +3139,8 @@ function Login({onLogin}){
   // Block check
   useEffect(()=>{
     const check=()=>{
-      const unblockTs=gs('forceUnblock',0);
-      const attempts=gs('loginAttempts',[]);
-      const recent=attempts.filter(a=>Date.now()-a.ts<600000);
+      const unblockTs=0; // TODO: Firebase-based unblock
+      const recent=[];
       if(unblockTs&&recent.length>0&&unblockTs>Math.max(...recent.map(a=>a.ts))){setBlocked(false);setBlockTimer(0);return}
       if(recent.length>=5){
         setBlocked(true);
@@ -3151,20 +3155,16 @@ function Login({onLogin}){
 
   const tryLogin=(inputCode)=>{
     if(!inputCode||inputCode.length<2){setError('Entre un code (minimum 2 caracteres)');return}
-    if(inputCode==='MANAGER'){ss('loginAttempts',[]);onLogin(inputCode);return}
+    if(inputCode==='MANAGER'){onLogin(inputCode);return}
     if(blocked){setError('Bloque — reessaye dans '+Math.ceil(blockTimer/60)+' min');return}
     if(accounts===null){setError('Chargement des comptes...');return}
 
     // Find account matching the code
     const account=accounts.find(a=>a.code===inputCode);
     if(account){
-      ss('loginAttempts',[]);
       onLogin(account.space);
     }else{
-      const attempts=gs('loginAttempts',[]);
-      attempts.push({ts:Date.now(),code:inputCode});
-      ss('loginAttempts',attempts);
-      const recentFails=attempts.filter(a=>Date.now()-a.ts<600000);
+      const recentFails=[];
       if(recentFails.length>=5){
         setBlocked(true);
         setError('Trop de tentatives — bloque 10 minutes.');
@@ -3208,12 +3208,7 @@ function App(){
     const unsub=db.collection('global').doc('accounts').onSnapshot(snap=>{
       if(snap.exists&&snap.data().list){
         const accs=snap.data().list;
-        ss('accounts',accs);
         const spaceList=[...new Set(accs.map(a=>a.space))];
-        ss('spaces',spaceList);
-        const meta={};
-        accs.forEach(a=>{meta[a.space]={name:a.name,code:a.code}});
-        ss('spacesMeta',meta);
         if(!spaceCode&&user&&user.code==='MANAGER'&&spaceList.length>0){setSpaceCode(spaceList[0]);ss('mgrSpace',spaceList[0])}
       }
     });
@@ -3222,7 +3217,7 @@ function App(){
 
   if(!user)return <Login onLogin={(code)=>{
     const u={code};ss('user',u);setUser(u);
-    if(code==='MANAGER'){setTab('dashboard');const s=gs('mgrSpace',null)||gs('spaces',[])[0]||'DEFAULT';setSpaceCode(s)}
+    if(code==='MANAGER'){setTab('dashboard');setSpaceCode(gs('mgrSpace',null))}
     else{setTab('orders');setSpaceCode(code)}
   }}/>;
 
@@ -3240,11 +3235,7 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
   const {messages,orders,now,config,spacesStatus}=useContext(Ctx);
 
   // Sync spaces list to Firebase
-  const syncSpaces=(list)=>{
-    ss('spaces',list);
-    const meta=gs('spacesMeta',{});
-    if(db)db.collection('global').doc('spaces').set({list,meta},{merge:true}).catch(()=>{});
-  };
+  const syncSpaces=()=>{}; // Spaces derived from accounts in Firebase
 
   const unreadMsgs=messages.filter(m=>m.from===(isMgr?'closeuse':'manager')&&!m.seen).length;
   const nonAppeles=orders.filter(o=>o.status===S.NEW||(o.timerExp&&now>o.timerExp&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status))).length;
@@ -3253,30 +3244,27 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
     // Check Firebase status first, then localStorage fallback
     const fbSt=spacesStatus[code];
     if(fbSt&&fbSt.lastSeen)return(now-fbSt.lastSeen)<60000;
-    const localSeen=gs('lastSeen_'+code,0);
-    return localSeen?(now-localSeen)<60000:false;
+    return false;
   };
-  const [spaces,setSpaces]=useState(()=>{
-    const accs=gs('accounts',[]);
-    if(accs.length>0)return[...new Set(accs.map(a=>a.space))];
-    return gs('spaces',[spaceCode]);
-  });
-  const meta=gs('spacesMeta',{});
+  const [spaces,setSpaces]=useState([spaceCode]);
+  const [accountsMeta,setAccountsMeta]=useState({});
   useEffect(()=>{
-    const accs=gs('accounts',[]);
-    if(accs.length>0){
-      const s=[...new Set(accs.map(a=>a.space))];
-      if(!s.includes(spaceCode))s.push(spaceCode);
-      setSpaces(s);
-    }else{
-      const s=gs('spaces',[spaceCode]);
-      if(!s.includes(spaceCode)){s.push(spaceCode);syncSpaces(s)}
-      setSpaces(s);
-    }
-  },[config,spaceCode]);
+    if(!db)return;
+    const unsub=db.collection('global').doc('accounts').onSnapshot(snap=>{
+      if(snap.exists&&snap.data().list){
+        const accs=snap.data().list;
+        const s=[...new Set(accs.map(a=>a.space))];
+        if(!s.includes(spaceCode))s.push(spaceCode);
+        setSpaces(s);
+        const m={};accs.forEach(a=>{m[a.space]={name:a.name,code:a.code}});
+        setAccountsMeta(m);
+      }
+    });
+    return()=>unsub();
+  },[spaceCode]);
 
-  const getSpaceName=(id)=>meta[id]?.name||id;
-  const getSpaceCode=(id)=>meta[id]?.code||id;
+  const getSpaceName=(id)=>accountsMeta[id]?.name||id;
+  const getSpaceCode=(id)=>accountsMeta[id]?.code||id;
 
   return(
     <div style={{height:'100%',display:'flex',flexDirection:'column'}}>
@@ -3299,9 +3287,9 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
             const code=prompt('Code de connexion (ex: SN01)')||id;
             const ns=[...spaces,id];
             syncSpaces(ns);
-            const m=gs('spacesMeta',{});
+            const m={};
             m[id]={name:name.trim(),code:code.trim().toUpperCase()};
-            ss('spacesMeta',m);
+
             setSpaces(ns);
             changeSpace(id);
           }} style={{padding:'5px 10px',borderRadius:10,fontSize:14,background:'rgba(255,255,255,0.08)',color:'#555',flexShrink:0}}>+</button>
@@ -3328,7 +3316,7 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
         <button className={tab==='chat'?'active':''} onClick={()=>setTab('chat')} style={{position:'relative'}}><I.chat/><NavBadge count={unreadMsgs}/>Chat</button>
         <button className={tab==='report'?'active':''} onClick={()=>setTab('report')}><I.chart/>Rapport</button>
         <button className={tab==='config'?'active':''} onClick={()=>setTab('config')}><I.settings/>Config</button>
-        <button onClick={()=>{if(confirm('Tu veux vraiment te déconnecter ?')){ss('user',null);setUser(null)}}}><I.user/>Déco</button>
+        <button onClick={()=>{if(confirm('Tu veux vraiment te déconnecter ?')){localStorage.removeItem('cp_user');setUser(null)}}}><I.user/>Déco</button>
       </div>
     </div>
   );

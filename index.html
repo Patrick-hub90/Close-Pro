@@ -481,22 +481,77 @@ function Provider({children,spaceCode,isMgr}){
     setTimeout(()=>{suppressRef.current=false},5000);
   },[spaceCode]);
 
-  // Merge orders — ALWAYS deduplicates by orderNumber
-  const mergeOrders=useCallback((newOrders,replace)=>{
-    const normalized=newOrders.map(normalizeOrder);
+  // Smart merge: updates existing orders from Sheet + adds new ones
+  // Sheet controls: name, phone, whatsapp, product, price, qty, city
+  // App controls: status (if closeuse worked on it), timer, attempts, comments
+  const mergeOrders=useCallback((sheetOrders,replace)=>{
+    const normalized=sheetOrders.map(normalizeOrder);
     setOrders(prev=>{
       if(replace)return normalized;
-      // Atomic dedup: build set from existing, only add truly new
-      const existingNums=new Set();
-      prev.forEach(o=>{existingNums.add(o.orderNumber);existingNums.add(o.orderNumber.replace('#',''))});
-      const unique=normalized.filter(o=>{
-        if(existingNums.has(o.orderNumber)||existingNums.has(o.orderNumber.replace('#','')))return false;
-        existingNums.add(o.orderNumber);return true;
+
+      // Build lookup of app orders by normalized orderNumber
+      const appByNum={};
+      prev.forEach(o=>{
+        const key=o.orderNumber.replace('#','').trim();
+        appByNum[key]=o;
       });
-      return unique.length>0?[...unique,...prev]:prev;
+
+      // Build lookup of sheet orders
+      const sheetByNum={};
+      normalized.forEach(o=>{
+        const key=o.orderNumber.replace('#','').trim();
+        sheetByNum[key]=o;
+      });
+
+      // 1. Update existing app orders with sheet data
+      const updated=prev.map(o=>{
+        const key=o.orderNumber.replace('#','').trim();
+        const fromSheet=sheetByNum[key];
+        if(!fromSheet)return o; // Not in sheet → keep as-is
+
+        // Sheet updates basic fields
+        const merged={...o,
+          fullName:fromSheet.fullName||o.fullName,
+          phone:fromSheet.phone||o.phone,
+          whatsapp:fromSheet.whatsapp||o.whatsapp,
+          productName:fromSheet.productName||o.productName,
+          totalPrice:fromSheet.totalPrice||o.totalPrice,
+          quantity:fromSheet.quantity||o.quantity,
+          city:fromSheet.city||o.city,
+        };
+
+        // Status: Sheet wins ONLY if app hasn't touched it yet (still Nouvelle)
+        if(o.status===S.NEW&&fromSheet.status!==S.NEW){
+          merged.status=fromSheet.status;
+          merged.comment=fromSheet.comment||o.comment;
+          merged.attempts=fromSheet.attempts.length>0?fromSheet.attempts:o.attempts;
+          merged.timerExp=fromSheet.timerExp||o.timerExp;
+        }
+
+        // Update in Firebase too
+        if(db&&(merged.fullName!==o.fullName||merged.phone!==o.phone||merged.status!==o.status)){
+          ordersRef(spaceCode).doc(o.id).update(merged).catch(()=>{});
+        }
+        return merged;
+      });
+
+      // 2. Find truly new orders (in sheet but not in app)
+      const existingNums=new Set();
+      prev.forEach(o=>existingNums.add(o.orderNumber.replace('#','').trim()));
+      const newOnes=normalized.filter(o=>{
+        const key=o.orderNumber.replace('#','').trim();
+        if(existingNums.has(key))return false;
+        existingNums.add(key);
+        // Write new order to Firebase
+        if(db)ordersRef(spaceCode).doc(o.id).set(o).catch(()=>{});
+        return true;
+      });
+
+      if(newOnes.length===0&&JSON.stringify(updated)===JSON.stringify(prev))return prev;
+      return[...newOnes,...updated];
     });
     return normalized.length;
-  },[]);
+  },[spaceCode]);
 
   const addExpense=useCallback((e)=>{
     const exp={...e,id:gid(),date:new Date().toISOString()};
@@ -1869,7 +1924,7 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
 }
 
 // Global sync status
-window.__syncStatus={lastSync:0,active:false,sheets:0,newFound:0};
+window.__syncStatus={lastSync:0,active:false,sheets:0};
 
 function useAutoSync(){
   const {config,orders,mergeOrders,spaceCode}=useContext(Ctx);
@@ -1881,44 +1936,38 @@ function useAutoSync(){
       if(syncingRef.current)return;
       const sheets=config.sheetUrls||[];
       const mappings=config.sheetMappings||{};
-      const activeSheets=sheets.filter(s=>mappings[s.url]&&mappings[s.url]._tab&&mappings[s.url].orderNumber);
-      window.__syncStatus.sheets=activeSheets.length;
-      if(!activeSheets.length)return;
+      const active=sheets.filter(s=>mappings[s.url]&&mappings[s.url]._tab&&mappings[s.url].orderNumber);
+      window.__syncStatus.sheets=active.length;
+      if(!active.length)return;
       if(Date.now()-lastRef.current<30000)return;
       lastRef.current=Date.now();
       syncingRef.current=true;
       window.__syncStatus.active=true;
 
       try{
-        let totalNew=0;
-        for(const sh of activeSheets){
+        for(const sh of active){
           const m=mappings[sh.url];
           const r=await fetch('/api/sheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheetUrl:sh.url,sheetName:m._tab})});
           const data=await r.json();
           if(data.error||!data.rows)continue;
 
-          // Build orders from sheet rows
           const mapSt=(txt)=>{if(!txt)return S.NEW;const t=norm(txt);if(t.includes('livraison'))return S.LIVRAISON;if(t.includes('livre'))return S.LIVRE;if(t.includes('injoignable'))return S.INJOIGNABLE;if(t.includes('rappel'))return S.RAPPELE;if(t.includes('report'))return S.REPORTE;if(t.includes('annul'))return S.ANNULE;return S.NEW};
-          const sheetOrders=[];
-          data.rows.forEach((row,idx)=>{
+
+          const sheetOrders=data.rows.map((row,idx)=>{
             const rawNum=row[m.orderNumber]||'';
-            if(!rawNum)return;
+            if(!rawNum)return null;
             const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
             const st=m.statut?mapSt(row[m.statut]):S.NEW;
             const comment=m.commentaire?row[m.commentaire]||'':'';
             const needsTimer=[S.RAPPELE,S.INJOIGNABLE,S.REPORTE].includes(st);
             const now=new Date();
             const createdAt=new Date(now.getTime()-(data.rows.length-idx)*1000).toISOString();
-            sheetOrders.push({id:('s'+Math.random().toString(36).slice(2,10)),orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',createdAt,updatedAt:createdAt,status:st,attempts:st!==S.NEW?[{status:st,ts:createdAt,comment}]:[],timerExp:needsTimer?Date.now()-3600000:null,reportDate:null,comment,pricePaid:st===S.LIVRE?Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0:null,deliveryZone:'',deliveryCost:0});
-          });
+            return{id:('s'+Math.random().toString(36).slice(2,10)),orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',createdAt,updatedAt:createdAt,status:st,attempts:st!==S.NEW?[{status:st,ts:createdAt,comment}]:[],timerExp:needsTimer?Date.now()-3600000:null,reportDate:null,comment,pricePaid:st===S.LIVRE?Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0:null,deliveryZone:'',deliveryCost:0};
+          }).filter(Boolean);
 
-          // mergeOrders handles dedup atomically
-          const added=mergeOrders(sheetOrders.reverse(),false);
-          // Count truly new (compare before/after)
-          const beforeCount=window.__syncStatus._prevCount||0;
-          // We'll check after state update
+          // mergeOrders handles: update existing + add new + dedup
+          mergeOrders(sheetOrders.reverse(),false);
         }
-
         window.__syncStatus.lastSync=Date.now();
       }catch(e){}
       syncingRef.current=false;
@@ -1929,7 +1978,7 @@ function useAutoSync(){
     return()=>clearInterval(t);
   },[config.sheetUrls,config.sheetMappings]);
 
-  // Detect new orders added by sync → notify
+  // Notify when new orders appear
   const prevCountRef=useRef(orders.length);
   useEffect(()=>{
     if(orders.length>prevCountRef.current&&prevCountRef.current>0){

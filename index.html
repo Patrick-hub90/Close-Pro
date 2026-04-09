@@ -1640,15 +1640,16 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
   ];
 
   const mapStatus=(txt)=>{
-    if(!txt)return 'new';
-    const t=txt.toLowerCase().trim();
-    if(t.includes('livraison en cours')||t.includes('confirme'))return 'livraison';
-    if(t.includes('livre')||t.includes('delivered'))return 'livre';
-    if(t.includes('injoignable'))return 'injoignable';
-    if(t.includes('rappel'))return 'rappele';
-    if(t.includes('report'))return 'reporte';
-    if(t.includes('annul'))return 'annule';
-    return 'new';
+    if(!txt)return S.NEW;
+    const t=norm(txt);
+    if(!t)return S.NEW;
+    if(t.includes('livraison'))return S.LIVRAISON;
+    if(t.includes('livre'))return S.LIVRE;
+    if(t.includes('injoignable'))return S.INJOIGNABLE;
+    if(t.includes('rappel'))return S.RAPPELE;
+    if(t.includes('report'))return S.REPORTE;
+    if(t.includes('annul'))return S.ANNULE;
+    return S.NEW;
   };
 
   // Step 1: fetch tabs
@@ -1811,7 +1812,7 @@ function useAutoSync(){
             if(!rawNum)return;
             const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
             if(existing.has(orderNum)||existing.has(rawNum))return;
-            const mapSt=(txt)=>{if(!txt)return S.NEW;const t=norm(txt);if(t.includes('livraison en cours'))return S.LIVRAISON;if(t.includes('livre'))return S.LIVRE;if(t.includes('injoignable'))return S.INJOIGNABLE;if(t.includes('rappel'))return S.RAPPELE;if(t.includes('report'))return S.REPORTE;if(t.includes('annul'))return S.ANNULE;return S.NEW};
+            const mapSt=(txt)=>{if(!txt)return S.NEW;const t=norm(txt);if(t.includes('livraison'))return S.LIVRAISON;if(t.includes('livre'))return S.LIVRE;if(t.includes('injoignable'))return S.INJOIGNABLE;if(t.includes('rappel'))return S.RAPPELE;if(t.includes('report'))return S.REPORTE;if(t.includes('annul'))return S.ANNULE;return S.NEW};
             const st=m.statut?mapSt(row[m.statut]):S.NEW;
             const comment=m.commentaire?row[m.commentaire]||'':'';
             const order=importOrder({orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',status:st,comment:comment},data.rows.length-idx);

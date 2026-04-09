@@ -413,7 +413,7 @@ function Provider({children,spaceCode,isMgr}){
   // Import with full data (status, comments, date) — index for ordering
   const importOrder=useCallback((o,index)=>{
     const id=gid();
-    const status=o.status||S.NEW;
+    const status=o.status&&o.status!=='new'?o.status:S.NEW;
     const comment=o.comment||'';
     // Use today's date with offset so sheet order is preserved (first row = most recent)
     const now=new Date();
@@ -429,6 +429,13 @@ function Provider({children,spaceCode,isMgr}){
     if(db){ordersRef(spaceCode).get().then(snap=>{snap.forEach(doc=>doc.ref.delete())}).catch(()=>{})}
     setOrders([]);
     ss('orders_'+spaceCode,[]);
+  },[spaceCode]);
+
+  // Delete specific orders by ID
+  const deleteOrders=useCallback((ids)=>{
+    const idSet=new Set(ids);
+    if(db)ids.forEach(id=>ordersRef(spaceCode).doc(id).delete().catch(()=>{}));
+    setOrders(prev=>prev.filter(o=>!idSet.has(o.id)));
   },[spaceCode]);
 
   // Batch add orders (for import)
@@ -544,7 +551,7 @@ function Provider({children,spaceCode,isMgr}){
     return()=>unsubs.forEach(u=>u());
   },[]);
 
-  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,batchAddOrders,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus}}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,deleteOrders,batchAddOrders,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus}}>{children}</Ctx.Provider>;
 }
 
 // ============== NOTIFICATION ENGINE ==============
@@ -1030,13 +1037,15 @@ function dateSeparatorLabel(dateStr){
   return d.toLocaleDateString('fr',{day:'2-digit',month:'long'});
 }
 
-function OrdersPage(){
-  const {sorted,counts,now,addOrder,config}=useContext(Ctx);
+function OrdersPage({isMgr}){
+  const {sorted,counts,now,addOrder,config,deleteOrders}=useContext(Ctx);
   const [search,setSearch]=useState('');
   const [filter,setFilter]=useState('all');
   const [selectedId,setSelectedId]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
   const [newOrd,setNewOrd]=useState({orderNumber:'',productId:'',quantity:1,fullName:'',phone:'',whatsapp:'',address:'',city:''});
+  const [selectMode,setSelectMode]=useState(false);
+  const [selected,setSelected]=useState(new Set());
 
   const filtered=useMemo(()=>{
     let list=filter==='all'?sorted:filter==='tocall'?sorted.filter(o=>o.status===S.NEW||(o.timerExp&&Date.now()>o.timerExp&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status))):sorted.filter(o=>o.status===filter);
@@ -1088,7 +1097,8 @@ function OrdersPage(){
           <div>
             <h1 style={{fontSize:22,fontWeight:700,letterSpacing:-0.5}}>Commandes</h1>
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            {isMgr&&<button onClick={()=>{setSelectMode(!selectMode);setSelected(new Set())}} style={{height:34,padding:'0 12px',borderRadius:10,background:selectMode?'var(--red-vivid)':'#f0f0f0',color:selectMode?'#fff':'var(--muted)',fontSize:12,fontWeight:600}}>{selectMode?'Annuler':'Sélectionner'}</button>}
             <button onClick={()=>setShowAdd(true)} style={{width:34,height:34,borderRadius:10,background:'var(--dark)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{width:18,height:18}}><I.plus/></div></button>
             <span style={{fontSize:12,color:'var(--muted)',fontWeight:500}}>{new Date().toLocaleDateString('fr',{weekday:'short',day:'numeric',month:'short'})}</span>
           </div>
@@ -1148,10 +1158,34 @@ function OrdersPage(){
               {item.label}
             </div>
           ):(
-            <OrderCard key={item.key} order={item.order} onClick={()=>setSelectedId(item.order.id)}/>
+            <div key={item.key} style={{display:'flex',alignItems:'center',gap:0}}>
+              {selectMode&&(
+                <button onClick={()=>{setSelected(prev=>{const n=new Set(prev);n.has(item.order.id)?n.delete(item.order.id):n.add(item.order.id);return n})}} style={{width:44,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  <div style={{width:22,height:22,borderRadius:6,border:selected.has(item.order.id)?'none':'2px solid #ccc',background:selected.has(item.order.id)?'var(--dark)':'#fff',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    {selected.has(item.order.id)&&<div style={{width:12,height:12,color:'#fff'}}><I.check/></div>}
+                  </div>
+                </button>
+              )}
+              <div style={{flex:1}} onClick={()=>selectMode?setSelected(prev=>{const n=new Set(prev);n.has(item.order.id)?n.delete(item.order.id):n.add(item.order.id);return n}):setSelectedId(item.order.id)}>
+                <OrderCard order={item.order}/>
+              </div>
+            </div>
           )
         )}
       </div>
+
+      {/* Floating delete bar */}
+      {selectMode&&(
+        <div style={{position:'fixed',bottom:70,left:12,right:12,zIndex:50,background:'#fff',borderRadius:16,padding:'10px 14px',boxShadow:'0 4px 20px rgba(0,0,0,0.15)',display:'flex',alignItems:'center',gap:10}}>
+          <button onClick={()=>{selected.size===filtered.length?setSelected(new Set()):setSelected(new Set(filtered.map(o=>o.id)))}} style={{padding:'8px 14px',borderRadius:10,background:'#f0f0f0',fontSize:12,fontWeight:600}}>
+            {selected.size===filtered.length?'Désélectionner':'Tout sélectionner'}
+          </button>
+          <div style={{flex:1,fontSize:13,fontWeight:600,textAlign:'center'}}>{selected.size} sélectionnée{selected.size>1?'s':''}</div>
+          <button onClick={()=>{if(selected.size>0&&confirm('Supprimer '+selected.size+' commande(s) ?')){deleteOrders([...selected]);setSelected(new Set());setSelectMode(false)}}} disabled={selected.size===0} style={{padding:'8px 16px',borderRadius:10,background:selected.size>0?'var(--red-vivid)':'#ddd',color:selected.size>0?'#fff':'#999',fontSize:13,fontWeight:700}}>
+            Supprimer
+          </button>
+        </div>
+      )}
 
       {selectedOrder&&<OrderDetail order={selectedOrder} onClose={()=>setSelectedId(null)}/>}
 
@@ -1725,24 +1759,11 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
 }
 
 function useAutoSync(){
-  const {config,orders,importOrder,batchAddOrders,clearAllOrders}=useContext(Ctx);
+  const {config,orders,importOrder,batchAddOrders}=useContext(Ctx);
   const lastRef=useRef(0);
   const syncingRef=useRef(false);
   const ordersRef2=useRef(orders);
   ordersRef2.current=orders;
-
-  const mapStatus=(txt)=>{
-    if(!txt)return null; // null = no status in sheet, keep app status
-    const t=txt.toLowerCase().trim();
-    if(!t)return null;
-    if(t.includes('livraison en cours')||t.includes('confirme'))return 'livraison';
-    if(t.includes('livre')||t.includes('delivered'))return 'livre';
-    if(t.includes('injoignable'))return 'injoignable';
-    if(t.includes('rappel'))return 'rappele';
-    if(t.includes('report'))return 'reporte';
-    if(t.includes('annul'))return 'annule';
-    return null;
-  };
 
   useEffect(()=>{
     const run=async()=>{
@@ -1758,60 +1779,32 @@ function useAutoSync(){
         for(const sh of sheets){
           const m=mappings[sh.url];
           if(!m||!m.orderNumber||!m._tab)continue;
-
           const r=await fetch('/api/sheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheetUrl:sh.url,sheetName:m._tab})});
           const data=await r.json();
           if(data.error||!data.rows)continue;
 
-          // Build map of existing app orders by orderNumber
-          const appMap={};
-          ordersRef2.current.forEach(o=>{appMap[o.orderNumber]=o;appMap[o.orderNumber.replace('#','')]=o});
-
-          // Build new orders list from Sheet (Sheet = source of truth)
+          // Only add NEW orders (app is master — never touch existing)
+          const existing=new Set();
+          ordersRef2.current.forEach(o=>{existing.add(o.orderNumber);existing.add(o.orderNumber.replace('#',''))});
           const newOrders=[];
           data.rows.forEach((row,idx)=>{
             const rawNum=row[m.orderNumber]||'';
             if(!rawNum)return;
             const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
-            const existing=appMap[orderNum]||appMap[rawNum];
-            const sheetStatus=m.statut?mapStatus(row[m.statut]):null;
+            if(existing.has(orderNum)||existing.has(rawNum))return;
+            const mapSt=(txt)=>{if(!txt)return S.NEW;const t=txt.toLowerCase().trim();if(t.includes('livraison en cours'))return S.LIVRAISON;if(t.includes('livre'))return S.LIVRE;if(t.includes('injoignable'))return S.INJOIGNABLE;if(t.includes('rappel'))return S.RAPPELE;if(t.includes('report'))return S.REPORTE;if(t.includes('annul'))return S.ANNULE;return S.NEW};
+            const st=m.statut?mapSt(row[m.statut]):S.NEW;
             const comment=m.commentaire?row[m.commentaire]||'':'';
-            const dateStr=m.date?row[m.date]||'':'';
-            let actionDate=null;
-            if(dateStr){try{const p=dateStr.split('/');if(p.length>=3)actionDate=new Date(p[2].length===4?p[2]:('20'+p[2]),p[1]-1,p[0]).toISOString()}catch(e){}}
-
-            if(existing){
-              // Update existing: Sheet data wins, but keep app status if Sheet has none
-              const updated={...existing,
-                fullName:row[m.fullName]||existing.fullName,
-                phone:row[m.phone]||existing.phone,
-                whatsapp:row[m.whatsapp]||row[m.phone]||existing.whatsapp,
-                productName:row[m.productName]||existing.productName,
-                totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||existing.totalPrice,
-                quantity:Number(row[m.quantity])||existing.quantity,
-                city:row[m.city]||existing.city,
-              };
-              if(sheetStatus)updated.status=sheetStatus;
-              if(comment)updated.comment=comment;
-              newOrders.push(updated);
-            }else{
-              // New order from Sheet
-              const now=new Date();
-              const createdAt=new Date(now.getTime()-(data.rows.length-idx)*1000).toISOString();
-              const status=sheetStatus||'new';
-              const attempts=status!=='new'?[{status,ts:actionDate||createdAt,comment}]:[];
-              newOrders.push({id:('s'+Math.random().toString(36).slice(2,10)),orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',createdAt,updatedAt:createdAt,status,attempts,timerExp:null,reportDate:null,comment,pricePaid:status==='livre'?Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0:null,deliveryZone:'',deliveryCost:0});
-            }
+            const order=importOrder({orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',status:st,comment:comment},data.rows.length-idx);
+            newOrders.push(order);existing.add(orderNum);
           });
-
-          // Replace all orders with Sheet data (Sheet is master)
-          if(newOrders.length>0)batchAddOrders(newOrders.reverse(),true);
+          if(newOrders.length>0)batchAddOrders(newOrders.reverse(),false);
         }
       }catch(e){}
       syncingRef.current=false;
     };
     const t=setInterval(run,30000);
-    run();
+    setTimeout(run,5000); // First sync after 5s
     return()=>clearInterval(t);
   },[config.sheetUrls,config.sheetMappings]);
 }
@@ -2953,12 +2946,12 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
         </div>
       )}
 
-      {!isMgr&&tab==='orders'&&<OrdersPage/>}
+      {!isMgr&&tab==='orders'&&<OrdersPage isMgr={false}/>}
       {!isMgr&&tab==='report'&&<ReportPage/>}
       {!isMgr&&tab==='chat'&&<ChatPage isMgr={false}/>}
       {!isMgr&&tab==='config'&&<ConfigPage isManager={false}/>}
       {isMgr&&tab==='dashboard'&&<ManagerDashboard/>}
-      {isMgr&&tab==='orders'&&<OrdersPage/>}
+      {isMgr&&tab==='orders'&&<OrdersPage isMgr={true}/>}
       {isMgr&&tab==='chat'&&<ChatPage isMgr={true}/>}
       {isMgr&&tab==='report'&&<ReportPage/>}
       {isMgr&&tab==='config'&&<ConfigPage isManager={true}/>}

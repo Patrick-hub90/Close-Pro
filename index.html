@@ -97,11 +97,9 @@ function normalizeStatus(st){
 function normalizeOrder(o){
   const status=normalizeStatus(o.status);
   const attempts=(o.attempts||[]).map(a=>({...a,status:normalizeStatus(a.status)}));
-  const needsTimer=[S.RAPPELE,S.INJOIGNABLE,S.REPORTE].includes(status);
-  let timerExp=o.timerExp;
-  if(needsTimer&&!timerExp)timerExp=Date.now()-3600000;
+  // Ne JAMAIS créer de timer automatiquement — seule la closeuse peut en créer un
   if(status!==S.NEW&&attempts.length===0)attempts.push({status,ts:o.updatedAt||o.createdAt||new Date().toISOString(),comment:o.comment||''});
-  return{...o,status,attempts,timerExp};
+  return{...o,status,attempts};
 }
 
 // DEDUP: keeps only ONE order per orderNumber, smart merge when duplicate
@@ -127,7 +125,7 @@ function dedup(orders){
       // App-controlled fields: keep from the one with most progress
       status:older.status!==S.NEW?older.status:(newer.status||older.status),
       attempts:older.attempts&&older.attempts.length>0?older.attempts:newer.attempts||[],
-      timerExp:older.timerExp||newer.timerExp,
+      timerExp:older.timerExp, // Seul le timer de l'app compte
       comment:older.comment||newer.comment,
       pricePaid:older.pricePaid||newer.pricePaid,
       deliveryZone:older.deliveryZone||newer.deliveryZone,
@@ -455,7 +453,6 @@ function Provider({children,spaceCode,isMgr}){
     const newOrder={...o,id:gid(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:S.NEW,attempts:[],timerExp:null,reportDate:null,comment:'',pricePaid:null,deliveryZone:'',deliveryCost:0};
     if(db)ordersRef(spaceCode).doc(newOrder.id).set(newOrder).catch(()=>{});
     setOrders(prev=>[newOrder,...prev]);
-    sendPush('Nouvelle commande 📋',`${o.fullName||'Client'} — ${o.productName||'Produit'}`,spaceCode);
   },[spaceCode]);
 
   // Import with full data (status, comments, date) — index for ordering
@@ -467,9 +464,8 @@ function Provider({children,spaceCode,isMgr}){
     const createdAt=new Date(now.getTime()-(index||0)*1000).toISOString();
     const actionTs=o.actionDate||createdAt;
     const attempts=status!==S.NEW?[{status,ts:actionTs,comment}]:[];
-    // Set expired timer for callback statuses
-    const needsTimer=[S.RAPPELE,S.INJOIGNABLE,S.REPORTE].includes(status);
-    const timerExp=needsTimer?Date.now()-3600000:null;
+
+    const timerExp=null; // Timer créé uniquement par la closeuse dans l'app
     const order={id,orderNumber:o.orderNumber||'',fullName:o.fullName||'',phone:o.phone||'',whatsapp:o.whatsapp||'',productName:o.productName||'',totalPrice:o.totalPrice||0,quantity:o.quantity||1,city:o.city||'',createdAt,updatedAt:createdAt,status,attempts,timerExp,reportDate:status===S.REPORTE?actionTs:null,comment,pricePaid:status===S.LIVRE?o.totalPrice:null,deliveryZone:'',deliveryCost:0};
     if(db)ordersRef(spaceCode).doc(id).set(order).catch(()=>{});
     return order;
@@ -1980,10 +1976,9 @@ function useAutoSync(){
             const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
             const st=m.statut?mapSt(row[m.statut]):S.NEW;
             const comment=m.commentaire?row[m.commentaire]||'':'';
-            const needsTimer=[S.RAPPELE,S.INJOIGNABLE,S.REPORTE].includes(st);
             const now=new Date();
             const createdAt=new Date(now.getTime()-(data.rows.length-idx)*1000).toISOString();
-            return{id:('s'+Math.random().toString(36).slice(2,10)),orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',createdAt,updatedAt:createdAt,status:st,attempts:st!==S.NEW?[{status:st,ts:createdAt,comment}]:[],timerExp:needsTimer?Date.now()-3600000:null,reportDate:null,comment,pricePaid:st===S.LIVRE?Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0:null,deliveryZone:'',deliveryCost:0};
+            return{id:('s'+Math.random().toString(36).slice(2,10)),orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',createdAt,updatedAt:createdAt,status:st,attempts:st!==S.NEW?[{status:st,ts:createdAt,comment}]:[],timerExp:null,reportDate:null,comment,pricePaid:st===S.LIVRE?Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0:null,deliveryZone:'',deliveryCost:0};
           }).filter(Boolean);
 
           // syncFromSheet handles: update existing + add new + dedup
@@ -1999,17 +1994,26 @@ function useAutoSync(){
     return()=>clearInterval(t);
   },[config.sheetUrls,config.sheetMappings]);
 
-  // Notify when new orders appear
-  const prevCountRef=useRef(orders.length);
+  // Notify per new order — like Shopify: one notification per order
+  const prevOrderNums=useRef(new Set(orders.map(o=>o.orderNumber)));
   useEffect(()=>{
-    if(orders.length>prevCountRef.current&&prevCountRef.current>0){
-      const diff=orders.length-prevCountRef.current;
+    const currentNums=new Set(orders.map(o=>o.orderNumber));
+    const newOrders=orders.filter(o=>!prevOrderNums.current.has(o.orderNumber));
+    if(newOrders.length>0&&prevOrderNums.current.size>0){
+      // Sound: one ding
       playNotifSound();
       vibrate([200,100,200,100,200]);
-      sendPush('Nouvelle commande',diff+' commande'+(diff>1?'s':'')+' ajoutee'+(diff>1?'s':''),spaceCode);
+      // Push: one notification per new order
+      newOrders.forEach(o=>{
+        sendPush(
+          'Nouvelle commande',
+          `${o.fullName||'Client'} — ${o.productName||'Produit'} — ${(o.totalPrice||0).toLocaleString()}F`,
+          spaceCode
+        );
+      });
     }
-    prevCountRef.current=orders.length;
-  },[orders.length]);
+    prevOrderNums.current=currentNums;
+  },[orders]);
 }
 
 function ConfigPage({isManager}){

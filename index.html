@@ -240,52 +240,82 @@ function sendWhatsApp(phone,apikey,text){
   new Image().src=url;
 }
 
-// Push notifications
-function requestPushPermission(){
-  if('Notification' in window&&Notification.permission==='default'){
-    Notification.requestPermission();
-  }
-}
-function showPush(title,body,tag){
-  if('Notification' in window&&Notification.permission==='granted'){
-    // Use Service Worker notification if available (works on lock screen)
-    if('serviceWorker' in navigator&&navigator.serviceWorker.controller){
-      navigator.serviceWorker.ready.then(r=>{
-        r.showNotification(title,{body,tag:tag||'closepro',renotify:true,vibrate:[200,100,200],icon:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23111" width="100" height="100" rx="20"/><text x="50" y="65" text-anchor="middle" fill="white" font-size="40" font-weight="bold">CP</text></svg>'});
-      }).catch(()=>{});
-    }else{
-      try{new Notification(title,{body,tag:tag||'closepro',renotify:true})}catch(e){}
-    }
-  }
-}
-
-// Register Service Worker for background notifications
-if('serviceWorker' in navigator){
-  const swCode=`self.addEventListener('notificationclick',function(e){e.notification.close();e.waitUntil(clients.matchAll({type:'window'}).then(function(cs){if(cs.length>0)return cs[0].focus();return clients.openWindow('/')}))});`;
-  const blob=new Blob([swCode],{type:'application/javascript'});
-  navigator.serviceWorker.register(URL.createObjectURL(blob),{scope:'/'}).catch(()=>{
-    // Blob SW may fail, that's ok — push still works without it
-  });
-}
-
-// Vibration
-function vibrate(pattern){
-  if('vibrate' in navigator)navigator.vibrate(pattern||[200,100,200]);
-}
-
-// Notification sound (Shopify-like ding)
-function playNotifSound(){
+// ============== NOTIFICATIONS + SOUND + VIBRATION ==============
+// Audio context — unlocked on first user touch
+let audioCtx=null;
+let audioUnlocked=false;
+function unlockAudio(){
+  if(audioUnlocked)return;
   try{
-    const ctx=new(window.AudioContext||window.webkitAudioContext)();
-    const osc=ctx.createOscillator();const g=ctx.createGain();
-    osc.connect(g);g.connect(ctx.destination);
-    osc.type='sine';osc.frequency.setValueAtTime(880,ctx.currentTime);
-    osc.frequency.setValueAtTime(1100,ctx.currentTime+0.1);
-    osc.frequency.setValueAtTime(880,ctx.currentTime+0.2);
-    g.gain.setValueAtTime(0.3,ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.01,ctx.currentTime+0.5);
-    osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.5);
+    audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    // Play silent sound to unlock
+    const buf=audioCtx.createBuffer(1,1,22050);
+    const src=audioCtx.createBufferSource();
+    src.buffer=buf;src.connect(audioCtx.destination);src.start(0);
+    audioUnlocked=true;
   }catch(e){}
+}
+// Unlock audio on any user interaction
+document.addEventListener('touchstart',unlockAudio,{once:false});
+document.addEventListener('click',unlockAudio,{once:false});
+
+function playNotifSound(){
+  if(!audioCtx||audioCtx.state==='suspended')audioCtx?.resume();
+  if(!audioCtx)return;
+  try{
+    // Shopify-like double ding
+    const t=audioCtx.currentTime;
+    [0,0.15].forEach(delay=>{
+      const osc=audioCtx.createOscillator();
+      const g=audioCtx.createGain();
+      osc.connect(g);g.connect(audioCtx.destination);
+      osc.type='sine';
+      osc.frequency.setValueAtTime(delay===0?880:1046,t+delay);
+      g.gain.setValueAtTime(0.25,t+delay);
+      g.gain.exponentialRampToValueAtTime(0.001,t+delay+0.3);
+      osc.start(t+delay);osc.stop(t+delay+0.3);
+    });
+  }catch(e){}
+}
+
+function vibrate(pattern){
+  try{navigator.vibrate&&navigator.vibrate(pattern||[200,100,200])}catch(e){}
+}
+
+// Push notification permission — must be called from user gesture
+let notifPermission=typeof Notification!=='undefined'?Notification.permission:'denied';
+function askNotifPermission(){
+  if(typeof Notification==='undefined')return;
+  if(notifPermission==='default'){
+    Notification.requestPermission().then(p=>{notifPermission=p});
+  }
+}
+
+function showPush(title,body,tag){
+  if(notifPermission!=='granted')return;
+  const opts={body,tag:tag||'closepro-'+Date.now(),renotify:true,vibrate:[200,100,200,100,200],requireInteraction:true};
+  // Try SW notification first (works in background/locked screen)
+  if(navigator.serviceWorker&&navigator.serviceWorker.ready){
+    navigator.serviceWorker.ready.then(reg=>{
+      reg.showNotification(title,opts);
+    }).catch(()=>{
+      try{new Notification(title,opts)}catch(e){}
+    });
+  }else{
+    try{new Notification(title,opts)}catch(e){}
+  }
+}
+
+// Combined alert: sound + vibrate + push
+function alert360(title,body,tag){
+  playNotifSound();
+  vibrate([200,100,200,100,200]);
+  showPush(title,body,tag);
+}
+
+// Register Service Worker (real file, not blob)
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js').catch(()=>{});
 }
 
 // ============== CONTEXT ==============
@@ -485,28 +515,22 @@ function NotifEngine({isMgr}){
   const {orders,config,now,expenses,spaceCode}=useContext(Ctx);
   const dailySentRef=useRef(gs('dailySent_'+new Date().toDateString(),false));
 
-  // Request push permission on mount
-  useEffect(()=>{requestPushPermission()},[]);
-
-  // Detect new orders → sound + push + vibrate
+  // Detect new orders → full alert
   const prevOrderCountRef=useRef(orders.length);
   useEffect(()=>{
     if(orders.length>prevOrderCountRef.current){
       const newCount=orders.length-prevOrderCountRef.current;
-      playNotifSound();
-      vibrate([200,100,200,100,200]);
-      showPush('Nouvelle commande !',`${newCount} nouvelle${newCount>1?'s':''} commande${newCount>1?'s':''} reçue${newCount>1?'s':''}`,`neworder_${Date.now()}`);
+      alert360('Nouvelle commande',`${newCount} nouvelle${newCount>1?'s':''} commande${newCount>1?'s':''} reçue${newCount>1?'s':''}`,`neworder_${Date.now()}`);
     }
     prevOrderCountRef.current=orders.length;
   },[orders.length]);
 
-  // Monitor timer expirations → vibrate + push for closeuse
+  // Monitor timer expirations → full alert for closeuse
   useEffect(()=>{
     if(isMgr)return;
     const expired=orders.filter(o=>o.timerExp&&now>o.timerExp&&now-o.timerExp<5000&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status));
     expired.forEach(o=>{
-      if(config.vibrateEnabled)vibrate([300,150,300,150,300]);
-      if(config.pushEnabled)showPush('Rappel urgent !',`${o.fullName} (${o.orderNumber}) — timer expiré. Rappelle maintenant !`,'timer_'+o.id);
+      alert360('Rappel',`${o.fullName} (${o.orderNumber}) a rappeler`,'timer_'+o.id);
     });
   },[orders,now,isMgr]);
 
@@ -1927,25 +1951,28 @@ function ConfigPage({isManager}){
         </div>
       )}
 
-      {/* ======= CLOSEUSE: Notifications ======= */}
-      {!isManager&&(
-        <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Notifications</div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid #f5f5f0'}}>
-            <span style={{fontSize:13}}>Notifications push</span>
-            <button onClick={()=>{upd('pushEnabled',!config.pushEnabled);if(!config.pushEnabled)requestPushPermission()}} style={{width:44,height:24,borderRadius:12,background:config.pushEnabled?'var(--green-vivid)':'#ddd',position:'relative',transition:'background .2s'}}>
-              <span style={{position:'absolute',top:2,left:config.pushEnabled?22:2,width:20,height:20,borderRadius:10,background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.15)'}}/>
-            </button>
-          </div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0'}}>
-            <span style={{fontSize:13}}>Vibration</span>
-            <button onClick={()=>{upd('vibrateEnabled',!config.vibrateEnabled);if(!config.vibrateEnabled)vibrate([200])}} style={{width:44,height:24,borderRadius:12,background:config.vibrateEnabled?'var(--green-vivid)':'#ddd',position:'relative',transition:'background .2s'}}>
-              <span style={{position:'absolute',top:2,left:config.vibrateEnabled?22:2,width:20,height:20,borderRadius:10,background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.15)'}}/>
-            </button>
-          </div>
-          <p style={{fontSize:11,color:'var(--muted)',marginTop:8}}>Les notifications t'alertent quand un timer expire ou quand tu reçois un message.</p>
+      {/* ======= NOTIFICATIONS (tout le monde) ======= */}
+      <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+        <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Notifications</div>
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0'}}>
+          <div style={{width:10,height:10,borderRadius:5,background:notifPermission==='granted'?'var(--green-vivid)':notifPermission==='denied'?'var(--red-vivid)':'var(--amber-vivid)'}}/>
+          <span style={{fontSize:13,flex:1}}>
+            {notifPermission==='granted'?'Notifications activées':notifPermission==='denied'?'Notifications bloquées par le navigateur':'Notifications pas encore activées'}
+          </span>
         </div>
-      )}
+        {notifPermission!=='granted'&&(
+          <button onClick={()=>{askNotifPermission();setTimeout(()=>window.location.reload(),2000)}} style={{width:'100%',marginTop:8,padding:12,borderRadius:12,background:'var(--dark)',color:'#fff',fontWeight:700,fontSize:14}}>
+            Activer les notifications
+          </button>
+        )}
+        {notifPermission==='denied'&&(
+          <p style={{fontSize:11,color:'var(--red-vivid)',marginTop:8}}>Tu as bloqué les notifications. Va dans les paramètres de ton navigateur pour les réactiver.</p>
+        )}
+        <button onClick={()=>{alert360('Test notification','Verification du son et de la vibration','test_'+Date.now())}} style={{width:'100%',marginTop:8,padding:10,borderRadius:12,background:'#f5f5f0',color:'var(--text)',fontWeight:600,fontSize:13}}>
+          Tester le son et la vibration
+        </button>
+        <p style={{fontSize:11,color:'var(--muted)',marginTop:8}}>Tu seras alerté(e) pour : nouvelles commandes, timers expirés, messages reçus. Ajoute l'app à l'écran d'accueil pour les notifications écran verrouillé.</p>
+      </div>
 
       {/* ======= MANAGER ONLY: Données ======= */}
       {isManager&&(
@@ -1978,8 +2005,7 @@ function NotificationPopup({isMgr}){
     if(unread.length>0&&!activeMsg){
       setActiveMsg(unread[unread.length-1]);
       if(unread.length>prevCountRef.current){
-        if(config.vibrateEnabled!==false)vibrate([200,100,200]);
-        showPush(isMgr?'Message de la closeuse':'Message du Manager',unread[unread.length-1].text,'msg_'+unread[unread.length-1].id);
+        if(config.vibrateEnabled!==false)alert360(isMgr?'Nouveau message':'Nouveau message',unread[unread.length-1].text,'msg_'+unread[unread.length-1].id);
       }
     }
     prevCountRef.current=unread.length;

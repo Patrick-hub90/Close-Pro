@@ -97,6 +97,12 @@ function normalizeStatus(st){
 function normalizeOrder(o){
   const status=normalizeStatus(o.status);
   const attempts=(o.attempts||[]).map(a=>({...a,status:normalizeStatus(a.status)}));
+  const needsTimer=[S.RAPPELE,S.INJOIGNABLE,S.REPORTE].includes(status);
+  let timerExp=o.timerExp;
+  if(needsTimer&&!timerExp)timerExp=Date.now()-3600000;
+  if(status!==S.NEW&&attempts.length===0)attempts.push({status,ts:o.updatedAt||o.createdAt||new Date().toISOString(),comment:o.comment||''});
+  return{...o,status,attempts,timerExp};
+}
 
 // DEDUP: keeps only ONE order per orderNumber, smart merge when duplicate
 function dedup(orders){
@@ -130,13 +136,6 @@ function dedup(orders){
     };
   });
   return Object.values(seen);
-}
-
-  const needsTimer=[S.RAPPELE,S.INJOIGNABLE,S.REPORTE].includes(status);
-  let timerExp=o.timerExp;
-  if(needsTimer&&!timerExp)timerExp=Date.now()-3600000;
-  if(status!==S.NEW&&attempts.length===0)attempts.push({status,ts:o.updatedAt||o.createdAt||new Date().toISOString(),comment:o.comment||''});
-  return{...o,status,attempts,timerExp};
 }
 
 const STATUS_STYLE={

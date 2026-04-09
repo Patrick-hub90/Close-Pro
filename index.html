@@ -97,6 +97,41 @@ function normalizeStatus(st){
 function normalizeOrder(o){
   const status=normalizeStatus(o.status);
   const attempts=(o.attempts||[]).map(a=>({...a,status:normalizeStatus(a.status)}));
+
+// DEDUP: keeps only ONE order per orderNumber, smart merge when duplicate
+function dedup(orders){
+  const seen={};
+  orders.forEach(o=>{
+    const key=(o.orderNumber||'').replace('#','').trim();
+    if(!key)return;
+    const existing=seen[key];
+    if(!existing){seen[key]=o;return}
+    // Smart merge: keep older order's ID + app data, update basic fields from newer
+    const older=new Date(existing.createdAt)<new Date(o.createdAt)?existing:o;
+    const newer=older===existing?o:existing;
+    seen[key]={...older,
+      // Basic fields from the most recently updated source
+      fullName:newer.fullName||older.fullName,
+      phone:newer.phone||older.phone,
+      whatsapp:newer.whatsapp||older.whatsapp,
+      productName:newer.productName||older.productName,
+      totalPrice:newer.totalPrice||older.totalPrice,
+      quantity:newer.quantity||older.quantity,
+      city:newer.city||older.city,
+      // App-controlled fields: keep from the one with most progress
+      status:older.status!==S.NEW?older.status:(newer.status||older.status),
+      attempts:older.attempts&&older.attempts.length>0?older.attempts:newer.attempts||[],
+      timerExp:older.timerExp||newer.timerExp,
+      comment:older.comment||newer.comment,
+      pricePaid:older.pricePaid||newer.pricePaid,
+      deliveryZone:older.deliveryZone||newer.deliveryZone,
+      deliveryCost:older.deliveryCost||newer.deliveryCost,
+      updatedAt:new Date().toISOString(),
+    };
+  });
+  return Object.values(seen);
+}
+
   const needsTimer=[S.RAPPELE,S.INJOIGNABLE,S.REPORTE].includes(status);
   let timerExp=o.timerExp;
   if(needsTimer&&!timerExp)timerExp=Date.now()-3600000;
@@ -321,7 +356,7 @@ function msgsRef(code){return db?spaceRef(code).collection('messages'):null}
 function expRef(code){return db?spaceRef(code).collection('expenses'):null}
 
 function Provider({children,spaceCode,isMgr}){
-  const [orders,setOrders]=useState(()=>{const stored=gs('orders_'+spaceCode,null);return stored&&stored.length>0?stored.map(normalizeOrder):loadDemo()});
+  const [orders,setOrders]=useState(()=>{const stored=gs('orders_'+spaceCode,null);return stored&&stored.length>0?dedup(stored.map(normalizeOrder)):loadDemo()});
   const [config,setConfig]=useState(()=>{const stored=gs('config_'+spaceCode,null);return stored?{...loadConfig(),...stored}:loadConfig()});
   const [expenses,setExpenses]=useState(()=>gs('expenses_'+spaceCode,[]));
   const [messages,setMessages]=useState(()=>gs('messages_'+spaceCode,[]));
@@ -356,23 +391,12 @@ function Provider({children,spaceCode,isMgr}){
     if(!spaceCode||!db)return;
     const unsubs=[];
 
-    // Orders listener — MERGE Firebase + local, never lose data
-    const migrationDoneRef={current:false};
+    // Orders listener — just merge, dedup is automatic in setOrders
     unsubs.push(ordersRef(spaceCode).orderBy('createdAt','desc').onSnapshot(snap=>{
-      if(suppressRef.current)return; // Skip during delete operations
-      const fbData=snap.docs.map(d=>normalizeOrder({id:d.id,...d.data()}));
-      setOrders(prev=>{
-        // Merge: Firebase wins for existing IDs, keep local-only orders
-        const fbIds=new Set(fbData.map(o=>o.id));
-        const localOnly=prev.filter(o=>!fbIds.has(o.id));
-        // Push local-only orders to Firebase (one-time migration)
-        if(!migrationDoneRef.current&&localOnly.length>0&&db){
-          migrationDoneRef.current=true;
-          localOnly.forEach(o=>{ordersRef(spaceCode).doc(o.id).set(o).catch(()=>{})});
-        }
-        const merged=[...fbData,...localOnly].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-        return merged;
-      });
+      if(suppressRef.current)return;
+      const fbData=snap.docs.map(d=>({id:d.id,...d.data()}));
+      if(fbData.length===0)return;
+      setOrders(prev=>dedup([...fbData,...prev].map(normalizeOrder)));
       setFbReady(true);
     },err=>{console.log('Orders offline:',err);setFbReady(true)}));
 
@@ -481,76 +505,74 @@ function Provider({children,spaceCode,isMgr}){
     setTimeout(()=>{suppressRef.current=false},5000);
   },[spaceCode]);
 
-  // Smart merge: updates existing orders from Sheet + adds new ones
-  // Sheet controls: name, phone, whatsapp, product, price, qty, city
-  // App controls: status (if closeuse worked on it), timer, attempts, comments
-  const mergeOrders=useCallback((sheetOrders,replace)=>{
-    const normalized=sheetOrders.map(normalizeOrder);
+  // ============ SYNC ENGINE ============
+  // syncFromSheet: THE definitive merge function
+  // Rule: orderNumber is the unique key linking Sheet rows to app orders
+  // Sheet controls: name, phone, whatsapp, product, price, qty, city  
+  // App controls: status (if worked on), timer, attempts, comments, delivery
+  const syncFromSheet=useCallback((sheetRows,replace)=>{
     setOrders(prev=>{
-      if(replace)return normalized;
+      if(replace){
+        // Full replace: just use sheet data
+        const result=sheetRows.map(normalizeOrder);
+        result.forEach(o=>{if(db)ordersRef(spaceCode).doc(o.id).set(o).catch(()=>{})});
+        return result;
+      }
 
-      // Build lookup of app orders by normalized orderNumber
-      const appByNum={};
+      // MERGE mode — explicit, deterministic, no magic
+      // Step 1: Index existing app orders by normalized orderNumber
+      const appIndex={};
       prev.forEach(o=>{
-        const key=o.orderNumber.replace('#','').trim();
-        appByNum[key]=o;
+        const key=(o.orderNumber||'').replace('#','').trim();
+        if(key)appIndex[key]=o;
       });
 
-      // Build lookup of sheet orders
-      const sheetByNum={};
-      normalized.forEach(o=>{
-        const key=o.orderNumber.replace('#','').trim();
-        sheetByNum[key]=o;
-      });
-
-      // 1. Update existing app orders with sheet data
-      const updated=prev.map(o=>{
-        const key=o.orderNumber.replace('#','').trim();
-        const fromSheet=sheetByNum[key];
-        if(!fromSheet)return o; // Not in sheet → keep as-is
-
-        // Sheet updates basic fields
-        const merged={...o,
-          fullName:fromSheet.fullName||o.fullName,
-          phone:fromSheet.phone||o.phone,
-          whatsapp:fromSheet.whatsapp||o.whatsapp,
-          productName:fromSheet.productName||o.productName,
-          totalPrice:fromSheet.totalPrice||o.totalPrice,
-          quantity:fromSheet.quantity||o.quantity,
-          city:fromSheet.city||o.city,
-        };
-
-        // Status: Sheet wins ONLY if app hasn't touched it yet (still Nouvelle)
-        if(o.status===S.NEW&&fromSheet.status!==S.NEW){
-          merged.status=fromSheet.status;
-          merged.comment=fromSheet.comment||o.comment;
-          merged.attempts=fromSheet.attempts.length>0?fromSheet.attempts:o.attempts;
-          merged.timerExp=fromSheet.timerExp||o.timerExp;
+      // Step 2: Process each sheet row
+      const processedKeys=new Set();
+      const result=[];
+      
+      sheetRows.forEach(sheetOrder=>{
+        const key=(sheetOrder.orderNumber||'').replace('#','').trim();
+        if(!key||processedKeys.has(key))return;
+        processedKeys.add(key);
+        
+        const appOrder=appIndex[key];
+        if(appOrder){
+          // EXISTS in app → update basic fields, preserve app work
+          const updated={...appOrder,
+            fullName:sheetOrder.fullName||appOrder.fullName,
+            phone:sheetOrder.phone||appOrder.phone,
+            whatsapp:sheetOrder.whatsapp||appOrder.whatsapp,
+            productName:sheetOrder.productName||appOrder.productName,
+            totalPrice:sheetOrder.totalPrice||appOrder.totalPrice,
+            quantity:sheetOrder.quantity||appOrder.quantity,
+            city:sheetOrder.city||appOrder.city,
+          };
+          // Status: sheet wins ONLY if app is still "Nouvelle"
+          if(appOrder.status===S.NEW&&sheetOrder.status&&sheetOrder.status!==S.NEW){
+            updated.status=sheetOrder.status;
+            updated.attempts=sheetOrder.attempts||appOrder.attempts;
+            updated.timerExp=sheetOrder.timerExp||appOrder.timerExp;
+            updated.comment=sheetOrder.comment||appOrder.comment;
+          }
+          result.push(normalizeOrder(updated));
+        }else{
+          // NEW from sheet → add
+          const newOrder=normalizeOrder(sheetOrder);
+          if(db)ordersRef(spaceCode).doc(newOrder.id).set(newOrder).catch(()=>{});
+          result.push(newOrder);
         }
-
-        // Update in Firebase too
-        if(db&&(merged.fullName!==o.fullName||merged.phone!==o.phone||merged.status!==o.status)){
-          ordersRef(spaceCode).doc(o.id).update(merged).catch(()=>{});
-        }
-        return merged;
       });
 
-      // 2. Find truly new orders (in sheet but not in app)
-      const existingNums=new Set();
-      prev.forEach(o=>existingNums.add(o.orderNumber.replace('#','').trim()));
-      const newOnes=normalized.filter(o=>{
-        const key=o.orderNumber.replace('#','').trim();
-        if(existingNums.has(key))return false;
-        existingNums.add(key);
-        // Write new order to Firebase
-        if(db)ordersRef(spaceCode).doc(o.id).set(o).catch(()=>{});
-        return true;
+      // Step 3: Keep app-only orders (not in sheet)
+      prev.forEach(o=>{
+        const key=(o.orderNumber||'').replace('#','').trim();
+        if(key&&!processedKeys.has(key))result.push(o);
       });
 
-      if(newOnes.length===0&&JSON.stringify(updated)===JSON.stringify(prev))return prev;
-      return[...newOnes,...updated];
+      return result;
     });
-    return normalized.length;
+    return sheetRows.length;
   },[spaceCode]);
 
   const addExpense=useCallback((e)=>{
@@ -661,7 +683,7 @@ function Provider({children,spaceCode,isMgr}){
     return()=>unsubs.forEach(u=>u());
   },[]);
 
-  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,deleteOrders,mergeOrders,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus}}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,deleteOrders,syncFromSheet,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus}}>{children}</Ctx.Provider>;
 }
 
 // ============== NOTIFICATION ENGINE ==============
@@ -1751,7 +1773,7 @@ function ReportPage(){
 }
 // ============== SHEET SYNC ==============
 function SheetSync({sheetUrl,sheetLabel,onClose}){
-  const {importOrder,clearAllOrders,mergeOrders,orders,config,setConfig}=useContext(Ctx);
+  const {importOrder,clearAllOrders,syncFromSheet,orders,config,setConfig}=useContext(Ctx);
   const savedMapping=(config.sheetMappings||{})[sheetUrl]||{};
   const [step,setStep]=useState('tabs'); // tabs, map, done
   const [error,setError]=useState('');
@@ -1851,7 +1873,7 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       const order=importOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:row[mapping.productName]||sheetLabel||'',totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||'',status:st,comment:comment,actionDate:actionDate},rows.length-idx);
       newOrders.push(order);existingMap[orderNum]=true;imp++;
     });
-    mergeOrders(newOrders.reverse(),mode==='reset');
+    syncFromSheet(newOrders.reverse(),mode==='reset');
     setImported(imp);setSkipped(skip);
     // Save mapping AND make sure URL is in sheetUrls
     setConfig(prev=>{
@@ -1927,7 +1949,7 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
 window.__syncStatus={lastSync:0,active:false,sheets:0};
 
 function useAutoSync(){
-  const {config,orders,mergeOrders,spaceCode}=useContext(Ctx);
+  const {config,orders,syncFromSheet,spaceCode}=useContext(Ctx);
   const lastRef=useRef(0);
   const syncingRef=useRef(false);
 
@@ -1965,8 +1987,8 @@ function useAutoSync(){
             return{id:('s'+Math.random().toString(36).slice(2,10)),orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',createdAt,updatedAt:createdAt,status:st,attempts:st!==S.NEW?[{status:st,ts:createdAt,comment}]:[],timerExp:needsTimer?Date.now()-3600000:null,reportDate:null,comment,pricePaid:st===S.LIVRE?Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0:null,deliveryZone:'',deliveryCost:0};
           }).filter(Boolean);
 
-          // mergeOrders handles: update existing + add new + dedup
-          mergeOrders(sheetOrders.reverse(),false);
+          // syncFromSheet handles: update existing + add new + dedup
+          syncFromSheet(sheetOrders.reverse(),false);
         }
         window.__syncStatus.lastSync=Date.now();
       }catch(e){}

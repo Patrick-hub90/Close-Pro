@@ -367,7 +367,7 @@ function Provider({children,spaceCode,isMgr}){
       prevSpace.current=spaceCode;
       const stored=gs('orders_'+spaceCode,null);
       setOrders(stored&&stored.length>0?stored:[]);
-      setConfig(prev=>{const s=gs('config_'+spaceCode,null);return s?{...loadConfig(),...s}:loadConfig()});
+      setConfig(()=>{const s=gs('config_'+spaceCode,null);return s?{...loadConfig(),...s}:loadConfig()});
       setExpenses(gs('expenses_'+spaceCode,[]));
       setMessages(gs('messages_'+spaceCode,[]));
       setFbReady(false);
@@ -419,14 +419,20 @@ function Provider({children,spaceCode,isMgr}){
       });
     },err=>console.log('Expenses offline:',err)));
 
-    // Config listener — Firebase fills gaps but NEVER overwrites local values
+    // Config listener — merge properly per space
     unsubs.push(spaceRef(spaceCode).onSnapshot(snap=>{
       if(snap.exists){
         const d=snap.data();
-        if(d.config)setConfig(prev=>{
-          // Defaults → Firebase → Local (local always wins)
-          return{...loadConfig(),...d.config,...prev};
-        });
+        if(d.config){
+          const local=gs('config_'+spaceCode,null)||{};
+          setConfig(()=>{
+            const merged={...loadConfig(),...d.config,...local};
+            // Sheet config: use what's stored for THIS space
+            merged.sheetUrls=local.sheetUrls||d.config.sheetUrls||[];
+            merged.sheetMappings=local.sheetMappings||d.config.sheetMappings||{};
+            return merged;
+          });
+        }
       }
     },err=>console.log('Config offline:',err)));
 

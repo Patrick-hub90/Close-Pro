@@ -1560,59 +1560,84 @@ function ReportPage(){
 // ============== SHEET SYNC ==============
 function SheetSync({sheetUrl,sheetLabel,onClose}){
   const {importOrder,clearAllOrders,batchAddOrders,orders,config,setConfig}=useContext(Ctx);
-  const [status,setStatus]=useState('loading');
+  const savedMapping=(config.sheetMappings||{})[sheetUrl]||{};
+  const [step,setStep]=useState('tabs'); // tabs, map, done
+  const [error,setError]=useState('');
+  const [tabs,setTabs]=useState([]);
+  const [selTab,setSelTab]=useState(savedMapping._tab||'');
   const [headers,setHeaders]=useState([]);
   const [rows,setRows]=useState([]);
-  const [mapping,setMapping]=useState(()=>(config.sheetMappings||{})[sheetUrl]||{});
+  const [mapping,setMapping]=useState(savedMapping);
   const [imported,setImported]=useState(0);
   const [skipped,setSkipped]=useState(0);
-  const [mode,setMode]=useState('add'); // 'add' or 'reset'
+  const [mode,setMode]=useState('add');
 
   const fields=[
-    {key:'orderNumber',label:'N commande',auto:['order number','numero','order','n','#','commande','id']},
+    {key:'orderNumber',label:'N commande',auto:['order number','numero','order','commande','id']},
     {key:'fullName',label:'Nom',auto:['full name','nom','name','client']},
     {key:'phone',label:'Telephone',auto:['phone','telephone','tel','mobile']},
-    {key:'whatsapp',label:'WhatsApp',auto:['whatsapp','wa']},
+    {key:'whatsapp',label:'WhatsApp',auto:['whatsapp','wa','* whatsapp']},
     {key:'productName',label:'Produit',auto:['product name','produit','product','article']},
-    {key:'totalPrice',label:'Prix',auto:['total price','prix','price','montant','total']},
+    {key:'totalPrice',label:'Prix',auto:['total price','prix total','prix','price','montant']},
     {key:'quantity',label:'Quantite',auto:['product quantity','quantite','qty','quantity']},
     {key:'city',label:'Ville',auto:['city','ville','address 1','adresse']},
-    {key:'statut',label:'Statut',auto:['statut','status','etat','state']},
-    {key:'date',label:'Date',auto:['date','created','cree']},
-    {key:'commentaire',label:'Commentaire',auto:['commentaire','comment','note','notes']},
+    {key:'statut',label:'Statut',auto:['statut','status','etat']},
+    {key:'date',label:'Date',auto:['date','created']},
+    {key:'commentaire',label:'Commentaire',auto:['commentaire','comment','note']},
   ];
 
-  // Map French status text to app status
   const mapStatus=(txt)=>{
     if(!txt)return 'new';
     const t=txt.toLowerCase().trim();
-    if(t.includes('livraison en cours')||t.includes('confirmed')||t.includes('confirme'))return 'livraison';
+    if(t.includes('livraison en cours')||t.includes('confirme'))return 'livraison';
     if(t.includes('livre')||t.includes('delivered'))return 'livre';
-    if(t.includes('injoignable')||t.includes('unreachable'))return 'injoignable';
-    if(t.includes('rappel')||t.includes('callback'))return 'rappele';
-    if(t.includes('report')||t.includes('postpone'))return 'reporte';
-    if(t.includes('annul')||t.includes('cancel'))return 'annule';
+    if(t.includes('injoignable'))return 'injoignable';
+    if(t.includes('rappel'))return 'rappele';
+    if(t.includes('report'))return 'reporte';
+    if(t.includes('annul'))return 'annule';
     return 'new';
   };
 
+  // Step 1: fetch tabs
   useEffect(()=>{
     fetch('/api/sheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheetUrl})})
       .then(r=>r.json()).then(data=>{
-        if(data.error){setStatus('error:'+data.error);return}
+        if(data.error){setError(data.error);setStep('error');return}
+        if(data.tabs){
+          setTabs(data.tabs);
+          if(savedMapping._tab&&data.tabs.includes(savedMapping._tab)){
+            loadTab(savedMapping._tab);
+          }else if(data.tabs.length===1){
+            loadTab(data.tabs[0]);
+          }else{
+            setStep('tabs');
+          }
+        }
+      }).catch(e=>{setError(e.message);setStep('error')});
+  },[]);
+
+  // Step 2: fetch data from selected tab
+  const loadTab=(tabName)=>{
+    setSelTab(tabName);setStep('loading');
+    fetch('/api/sheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheetUrl,sheetName:tabName})})
+      .then(r=>r.json()).then(data=>{
+        if(data.error){setError(data.error);setStep('error');return}
         setHeaders(data.headers);setRows(data.rows);
-        if(Object.keys(mapping).length===0){
-          const autoMap={};
+        // Auto-map if no saved mapping
+        if(!savedMapping.orderNumber){
+          const autoMap={_tab:tabName};
           fields.forEach(f=>{
-            // Try exact match first, then includes
-            let match=data.headers.find(h=>f.auto.includes(h));
-            if(!match)match=data.headers.find(h=>f.auto.some(a=>h.includes(a)));
-            if(match)autoMap[f.key]=match;
+            let m=data.headers.find(h=>f.auto.includes(h));
+            if(!m)m=data.headers.find(h=>f.auto.some(a=>h.includes(a)));
+            if(m)autoMap[f.key]=m;
           });
           setMapping(autoMap);
+        }else{
+          setMapping(prev=>({...prev,_tab:tabName}));
         }
-        setStatus('map');
-      }).catch(e=>setStatus('error:'+e.message));
-  },[]);
+        setStep('map');
+      }).catch(e=>{setError(e.message);setStep('error')});
+  };
 
   const doImport=()=>{
     if(mode==='reset')clearAllOrders();
@@ -1629,16 +1654,14 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       const comment=mapping.commentaire?row[mapping.commentaire]||'':'';
       const dateStr=mapping.date?row[mapping.date]||'':'';
       let actionDate=null;
-      if(dateStr){try{const parts=dateStr.split('/');if(parts.length>=3)actionDate=new Date(parts[2].length===4?parts[2]:('20'+parts[2]),parts[1]-1,parts[0]).toISOString();else actionDate=new Date(dateStr).toISOString()}catch(e){}}
+      if(dateStr){try{const p=dateStr.split('/');if(p.length>=3)actionDate=new Date(p[2].length===4?p[2]:('20'+p[2]),p[1]-1,p[0]).toISOString();else actionDate=new Date(dateStr).toISOString()}catch(e){}}
       const order=importOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:row[mapping.productName]||sheetLabel||'',totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||'',status:st,comment:comment,actionDate:actionDate},rows.length-idx);
-      newOrders.push(order);
-      existingMap[orderNum]=true;imp++;
+      newOrders.push(order);existingMap[orderNum]=true;imp++;
     });
-    // Batch add all orders at once (reversed so most recent first)
     batchAddOrders(newOrders.reverse(),mode==='reset');
     setImported(imp);setSkipped(skip);
     setConfig(prev=>({...prev,sheetMappings:{...(prev.sheetMappings||{}),[sheetUrl]:mapping}}));
-    setStatus('done');
+    setStep('done');
   };
 
   return(
@@ -1648,36 +1671,52 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
           <div style={{fontSize:16,fontWeight:700}}>Synchro {sheetLabel}</div>
           <button onClick={onClose} style={{width:28,height:28,borderRadius:14,background:'#f0f0f0',display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{width:14,height:14}}><I.x/></div></button>
         </div>
-        {status==='loading'&&<div style={{padding:40,textAlign:'center',color:'var(--muted)'}}>Chargement...</div>}
-        {status.startsWith('error')&&<div style={{padding:20,textAlign:'center',color:'var(--red-vivid)',fontSize:13}}>{status.replace('error:','')}</div>}
-        {status==='map'&&(<>
-          {/* Mode selector */}
-          <div style={{display:'flex',gap:6,marginBottom:12}}>
-            <button onClick={()=>setMode('add')} style={{flex:1,padding:'10px',borderRadius:10,fontWeight:600,fontSize:13,background:mode==='add'?'var(--dark)':'#f0f0f0',color:mode==='add'?'#fff':'var(--text)'}}>Ajouter les nouvelles</button>
-            <button onClick={()=>setMode('reset')} style={{flex:1,padding:'10px',borderRadius:10,fontWeight:600,fontSize:13,background:mode==='reset'?'var(--red-vivid)':'#f0f0f0',color:mode==='reset'?'#fff':'var(--text)'}}>Tout remplacer</button>
+
+        {step==='error'&&<div style={{padding:20,textAlign:'center',color:'var(--red-vivid)',fontSize:13}}>{error}</div>}
+        {step==='loading'&&<div style={{padding:40,textAlign:'center',color:'var(--muted)'}}>Chargement de l onglet...</div>}
+
+        {/* Tab selector */}
+        {step==='tabs'&&tabs.length>0&&(
+          <div>
+            <div style={{fontSize:13,color:'var(--muted)',marginBottom:10}}>Ce fichier a {tabs.length} onglets. Choisis celui a synchroniser :</div>
+            {tabs.map((t,i)=>(
+              <button key={i} onClick={()=>loadTab(t)} style={{width:'100%',padding:14,marginBottom:6,borderRadius:12,background:'#f5f5f0',fontSize:14,fontWeight:600,textAlign:'left',border:'1.5px solid var(--border)'}}>
+                {t}
+              </button>
+            ))}
           </div>
-          {mode==='reset'&&<div style={{padding:'8px 10px',borderRadius:8,background:'var(--red-bg)',fontSize:12,color:'var(--red-text)',marginBottom:10}}>Toutes les commandes actuelles seront supprimees et remplacees par le Sheet.</div>}
-          <div style={{fontSize:12,color:'var(--muted)',marginBottom:10}}>{rows.length} lignes. Verifie le mapping :</div>
+        )}
+
+        {/* Column mapping */}
+        {step==='map'&&(<>
+          <div style={{fontSize:12,color:'var(--teal-vivid)',fontWeight:600,marginBottom:8}}>Onglet : {selTab} — {rows.length} lignes</div>
+          <div style={{display:'flex',gap:6,marginBottom:10}}>
+            <button onClick={()=>setMode('add')} style={{flex:1,padding:10,borderRadius:10,fontWeight:600,fontSize:13,background:mode==='add'?'var(--dark)':'#f0f0f0',color:mode==='add'?'#fff':'var(--text)'}}>Ajouter les nouvelles</button>
+            <button onClick={()=>setMode('reset')} style={{flex:1,padding:10,borderRadius:10,fontWeight:600,fontSize:13,background:mode==='reset'?'var(--red-vivid)':'#f0f0f0',color:mode==='reset'?'#fff':'var(--text)'}}>Tout remplacer</button>
+          </div>
+          {mode==='reset'&&<div style={{padding:'6px 10px',borderRadius:8,background:'var(--red-bg)',fontSize:12,color:'var(--red-text)',marginBottom:8}}>Toutes les commandes seront supprimees.</div>}
           {fields.map(f=>(<div key={f.key} style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
-            <span style={{fontSize:11,fontWeight:600,minWidth:85,color:['statut','date','commentaire'].includes(f.key)?'var(--teal-vivid)':'var(--text)'}}>{f.label}</span>
+            <span style={{fontSize:11,fontWeight:600,minWidth:80,color:['statut','date','commentaire'].includes(f.key)?'var(--teal-vivid)':'var(--text)'}}>{f.label}</span>
             <select value={mapping[f.key]||''} onChange={e=>setMapping(prev=>({...prev,[f.key]:e.target.value}))} style={{flex:1,padding:'5px 6px',borderRadius:8,border:'1.5px solid var(--border)',fontSize:11,fontFamily:'inherit',background:'#fff'}}>
               <option value="">--</option>{headers.map(h=><option key={h} value={h}>{h}</option>)}
             </select>
-            {mapping[f.key]&&<span style={{fontSize:10,color:'var(--green-vivid)'}}>OK</span>}
+            {mapping[f.key]&&<span style={{fontSize:9,color:'var(--green-vivid)'}}>OK</span>}
           </div>))}
-          <div style={{background:'#f9f9f6',borderRadius:10,padding:8,margin:'8px 0 10px',fontSize:11}}>
-            {rows.slice(0,3).map((r,i)=>(<div key={i} style={{color:'#555',padding:'3px 0'}}>
-              {mapping.orderNumber&&<b>{r[mapping.orderNumber]}</b>}{mapping.fullName&&' - '+r[mapping.fullName]}{mapping.statut&&<span style={{color:'var(--teal-vivid)',fontWeight:600}}>{' ['+r[mapping.statut]+']'}</span>}{mapping.commentaire&&r[mapping.commentaire]&&<span style={{color:'var(--muted)',fontStyle:'italic'}}>{' "'+r[mapping.commentaire].slice(0,30)+'"'}</span>}
+          <div style={{background:'#f9f9f6',borderRadius:10,padding:8,margin:'6px 0 10px',fontSize:11}}>
+            {rows.slice(-3).reverse().map((r,i)=>(<div key={i} style={{color:'#555',padding:'3px 0'}}>
+              {mapping.orderNumber&&<b>{r[mapping.orderNumber]}</b>}{mapping.fullName&&' - '+r[mapping.fullName]}{mapping.statut&&r[mapping.statut]&&<span style={{color:'var(--teal-vivid)',fontWeight:600}}>{' ['+r[mapping.statut]+']'}</span>}{mapping.commentaire&&r[mapping.commentaire]&&<span style={{color:'var(--muted)',fontStyle:'italic'}}>{' "'+r[mapping.commentaire].slice(0,25)+'"'}</span>}
             </div>))}
           </div>
           <button onClick={doImport} disabled={!mapping.orderNumber} style={{width:'100%',padding:14,borderRadius:12,background:mapping.orderNumber?(mode==='reset'?'var(--red-vivid)':'var(--dark)'):'#ddd',color:mapping.orderNumber?'#fff':'#999',fontWeight:700,fontSize:15}}>
-            {mode==='reset'?'Supprimer et reimporter '+rows.length+' commandes':'Importer les nouvelles'}
+            {mode==='reset'?'Remplacer par '+rows.length+' commandes':'Importer les nouvelles'}
           </button>
         </>)}
-        {status==='done'&&(<div style={{padding:20,textAlign:'center'}}>
+
+        {step==='done'&&(<div style={{padding:20,textAlign:'center'}}>
           <div style={{fontSize:28,marginBottom:8}}>OK</div>
-          <div style={{fontSize:16,fontWeight:700}}>{imported} commande{imported>1?'s':''} importee{imported>1?'s':''}</div>
+          <div style={{fontSize:16,fontWeight:700}}>{imported} commande{imported>1?'s':''}</div>
           {skipped>0&&<div style={{fontSize:13,color:'var(--muted)',marginTop:4}}>{skipped} existante{skipped>1?'s':''}</div>}
+          <div style={{fontSize:11,color:'var(--muted)',marginTop:6}}>Onglet et mapping sauvegardes</div>
           <button onClick={onClose} style={{marginTop:14,padding:'12px 40px',borderRadius:12,background:'var(--dark)',color:'#fff',fontWeight:700}}>Fermer</button>
         </div>)}
       </div>
@@ -1697,9 +1736,9 @@ function useAutoSync(){
       lastRef.current=Date.now();
       for(const sh of sheets){
         const m=mappings[sh.url];
-        if(!m||!m.orderNumber)continue;
+        if(!m||!m.orderNumber||!m._tab)continue;
         try{
-          const r=await fetch('/api/sheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheetUrl:sh.url})});
+          const r=await fetch('/api/sheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheetUrl:sh.url,sheetName:m._tab})});
           const data=await r.json();
           if(data.error||!data.rows)continue;
           const existing=new Set();

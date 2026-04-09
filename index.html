@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.25';
+var APP_VERSION='v3.26';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){localStorage.clear();
   // New version detected — clear all caches
@@ -207,43 +207,18 @@ function getPalierFromRate(rate,grid){
 function loadDemo(){return[]}
 
 function loadConfig(){
-  const defaults={
-    closeuseCode:'CM01',closeuseName:'Closeuse Cameroun',country:'Cameroun',sheetUrls:[],
-    zones:[{name:'Yaoundé Centre',price:1500},{name:'Yaoundé Périphérie',price:2500},{name:'Douala Centre',price:1500},{name:'Douala Périphérie',price:2500},{name:'Autres villes',price:3500}],
-    products:[
-      {id:'p1',name:"Gel XXL",stock:50,price:13900,aliases:["L'Extension XXL : Volume & Endurance","L'Extension XXL"]},
-      {id:'p2',name:"Formule Aoki",stock:30,price:6900,aliases:["Formule Aoki","Crème Aoki"]}
-    ],
+  return{
+    closeuseCode:'',closeuseName:'',country:'',sheetUrls:[],sheetMappings:{},
+    zones:[],
+    products:[],
     salaryPerDelivery:1000,maxAttempts:3,
     timerInjo:2,timerRappel:1,
     whatsappPhone:'',whatsappApiKey:'',
     pushEnabled:true,vibrateEnabled:true,dailyReportHour:20,
-    salaryGrid:[
-      {minConfirm:0,rate:1000,label:'À améliorer',emoji:'📈'},
-      {minConfirm:60,rate:1200,label:'Bronze',emoji:'🥉'},
-      {minConfirm:70,rate:1500,label:'Argent',emoji:'🥈'},
-      {minConfirm:80,rate:1700,label:'Or',emoji:'🏆'},
-      {minConfirm:100,rate:2000,label:'Diamant',emoji:'💎'},
-    ],
-    funMessages:[
-      "Tu as mangé aujourd'hui ? Prends soin de toi 💪",
-      "Tu gères ! Continue comme ça 🔥",
-      "Petite pause ? Un verre d'eau et on repart 💧",
-      "Tu es une machine à vendre ! 🚀",
-      "N'oublie pas de sourire quand tu appelles 😊",
-      "Chaque appel te rapproche du palier Diamant 💎",
-      "Le client qui dit non aujourd'hui dira oui demain ✨",
-      "Tu fais un travail incroyable, continue ! 🌟",
-    ],
-    waTemplates:[
-      {id:'t1',name:'Injoignable',situation:'injoignable',text:"Bonjour {nom}, nous avons essayé de vous joindre concernant votre commande {produit}. Merci de nous rappeler ou de répondre à ce message pour confirmer votre commande. Cordialement."},
-      {id:'t2',name:'Confirmation livraison',situation:'confirmation',text:"Bonjour {nom}, votre commande {produit} est confirmée ! Notre livreur vous contactera pour la livraison à {ville}. Montant : {prix} F. Merci pour votre confiance !"},
-      {id:'t3',name:'Client rappellera',situation:'rappel_client',text:"Bonjour {nom}, suite à notre échange, n'hésitez pas à nous recontacter quand vous serez prêt pour votre commande {produit}. Nous restons disponibles !"},
-      {id:'t4',name:'Relance reportée',situation:'relance',text:"Bonjour {nom}, nous revenons vers vous concernant votre commande {produit} à {prix} F. Êtes-vous toujours intéressé ? Répondez OUI pour confirmer ou ANNULER si vous souhaitez annuler."},
-      {id:'t5',name:'Suivi livraison',situation:'suivi',text:"Bonjour {nom}, votre commande {produit} est en cours de livraison vers {ville}. Merci de rester joignable. À très bientôt !"},
-    ]
+    salaryGrid:[],
+    funMessages:[],
+    waTemplates:[]
   };
-  return defaults;
 }
 
 // ============== ICONS ==============
@@ -606,10 +581,15 @@ function Provider({children,spaceCode,isMgr}){
 
   const setConfigAndSync=useCallback((newConfig)=>{
     if(typeof newConfig==='function'){
-      setConfig(prev=>{const c=newConfig(prev);if(db)spaceRef(spaceCode).set({config:c},{merge:true}).catch(()=>{});return c});
+      setConfig(prev=>{
+        const c=newConfig(prev);
+        // Only write to Firebase if config has real data
+        if(db&&c.closeuseCode)spaceRef(spaceCode).set({config:c},{merge:true}).catch(()=>{});
+        return c;
+      });
     }else{
       setConfig(newConfig);
-      if(db)spaceRef(spaceCode).set({config:newConfig},{merge:true}).catch(()=>{});
+      if(db&&newConfig.closeuseCode)spaceRef(spaceCode).set({config:newConfig},{merge:true}).catch(()=>{});
     }
   },[spaceCode]);
 
@@ -641,7 +621,7 @@ function Provider({children,spaceCode,isMgr}){
       const ts=Date.now();
       setLastSeen(ts);
       // lastSeen stored in Firebase only
-      if(db)spaceRef(spaceCode).set({lastSeen:ts},{merge:true}).catch(()=>{});
+      if(db&&config.closeuseCode)spaceRef(spaceCode).set({lastSeen:ts},{merge:true}).catch(()=>{});
     };
     beat();
     const t=setInterval(beat,30000);

@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.21';
+var APP_VERSION='v3.22';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   // New version detected — clear all caches
@@ -2036,7 +2036,13 @@ function AccountsManager(){
         setAccounts(snap.data().list);
       }else{
         // Auto-migrate: read old spaces + metadata and create accounts
-        // No accounts yet — manager needs to create them
+        // No accounts yet — create defaults
+        const defaults=[
+          {code:'CM01',name:'Closeuse Cameroun',space:'CM01',createdAt:new Date().toISOString()},
+          {code:'SN01',name:'Closeuse Sénégal',space:'SN01',createdAt:new Date().toISOString()},
+        ];
+        setAccounts(defaults);
+        db.collection('global').doc('accounts').set({list:defaults}).catch(()=>{});
       }
       setLoaded(true);
     },()=>{setLoaded(true)});
@@ -3202,18 +3208,21 @@ function App(){
   const [tab,setTab]=useState(()=>{const u=gs('user',null);return u&&u.code==='MANAGER'?'dashboard':'orders'});
   const [spaceCode,setSpaceCode]=useState(()=>{const u=gs('user',null);return u?u.code==='MANAGER'?(gs('mgrSpace',null)):u.code:null});
 
-  // Load accounts from Firebase → derive spaces
+  // Load accounts from Firebase → set first space for manager
   useEffect(()=>{
-    if(!db)return;
+    if(!db||!user)return;
     const unsub=db.collection('global').doc('accounts').onSnapshot(snap=>{
       if(snap.exists&&snap.data().list){
         const accs=snap.data().list;
         const spaceList=[...new Set(accs.map(a=>a.space))];
-        if(!spaceCode&&user&&user.code==='MANAGER'&&spaceList.length>0){setSpaceCode(spaceList[0]);ss('mgrSpace',spaceList[0])}
+        if(!spaceCode&&user.code==='MANAGER'&&spaceList.length>0){
+          setSpaceCode(spaceList[0]);
+          ss('mgrSpace',spaceList[0]);
+        }
       }
     });
     return()=>unsub();
-  },[user]);
+  },[user,spaceCode]);
 
   if(!user)return <Login onLogin={(code)=>{
     const u={code};ss('user',u);setUser(u);
@@ -3224,9 +3233,18 @@ function App(){
   const isMgr=user.code==='MANAGER';
   const changeSpace=(code)=>{setSpaceCode(code);ss('mgrSpace',code)};
 
+  // Manager waiting for first space to load
+  if(isMgr&&!spaceCode)return(
+    <div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',alignItems:'center',background:'#111',color:'#fff'}}>
+      <div style={{fontSize:18,fontWeight:700,marginBottom:10}}>Chargement des espaces...</div>
+      <p style={{color:'#666',fontSize:13}}>Connexion a Firebase en cours</p>
+      <button onClick={()=>{localStorage.removeItem('cp_user');setUser(null)}} style={{marginTop:20,padding:'10px 20px',borderRadius:10,background:'#333',color:'#888',fontSize:13}}>Deconnexion</button>
+    </div>
+  );
+
   return(
-    <Provider key={spaceCode} spaceCode={spaceCode||'DEFAULT'} isMgr={isMgr}>
-      <AppInner isMgr={isMgr} tab={tab} setTab={setTab} setUser={setUser} spaceCode={spaceCode||'DEFAULT'} changeSpace={changeSpace}/>
+    <Provider key={spaceCode} spaceCode={spaceCode} isMgr={isMgr}>
+      <AppInner isMgr={isMgr} tab={tab} setTab={setTab} setUser={setUser} spaceCode={spaceCode} changeSpace={changeSpace}/>
     </Provider>
   );
 }

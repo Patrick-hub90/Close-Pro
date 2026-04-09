@@ -78,6 +78,23 @@ const S={
 // Normalize accents: é→e, è→e, etc.
 const norm=t=>t.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
 
+// Normalize any status string to exact S constant
+function normalizeStatus(st){
+  if(!st)return S.NEW;
+  // Already a valid S constant?
+  if(Object.values(S).includes(st))return st;
+  const t=norm(st);
+  if(t.includes('livraison'))return S.LIVRAISON;
+  if(t.includes('livre'))return S.LIVRE;
+  if(t.includes('injoignable'))return S.INJOIGNABLE;
+  if(t.includes('rappel'))return S.RAPPELE;
+  if(t.includes('report'))return S.REPORTE;
+  if(t.includes('annul'))return S.ANNULE;
+  if(t.includes('echec'))return S.ECHEC;
+  if(t.includes('abandon'))return S.ABANDONNE;
+  return S.NEW;
+}
+
 const STATUS_STYLE={
   [S.NEW]:{bg:'var(--blue-bg)',color:'var(--blue-text)',dot:'var(--blue-vivid)'},
   [S.LIVRAISON]:{bg:'var(--teal-bg)',color:'var(--teal-text)',dot:'var(--teal-vivid)'},
@@ -303,7 +320,7 @@ function msgsRef(code){return db?spaceRef(code).collection('messages'):null}
 function expRef(code){return db?spaceRef(code).collection('expenses'):null}
 
 function Provider({children,spaceCode,isMgr}){
-  const [orders,setOrders]=useState(()=>{const stored=gs('orders_'+spaceCode,null);return stored&&stored.length>0?stored:loadDemo()});
+  const [orders,setOrders]=useState(()=>{const stored=gs('orders_'+spaceCode,null);return stored&&stored.length>0?stored.map(o=>({...o,status:normalizeStatus(o.status)})):loadDemo()});
   const [config,setConfig]=useState(()=>{const stored=gs('config_'+spaceCode,null);return stored?{...loadConfig(),...stored}:loadConfig()});
   const [expenses,setExpenses]=useState(()=>gs('expenses_'+spaceCode,[]));
   const [messages,setMessages]=useState(()=>gs('messages_'+spaceCode,[]));
@@ -342,7 +359,7 @@ function Provider({children,spaceCode,isMgr}){
     const migrationDoneRef={current:false};
     unsubs.push(ordersRef(spaceCode).orderBy('createdAt','desc').onSnapshot(snap=>{
       if(suppressRef.current)return; // Skip during delete operations
-      const fbData=snap.docs.map(d=>({id:d.id,...d.data()}));
+      const fbData=snap.docs.map(d=>{const o={id:d.id,...d.data()};o.status=normalizeStatus(o.status);return o});
       setOrders(prev=>{
         // Merge: Firebase wins for existing IDs, keep local-only orders
         const fbIds=new Set(fbData.map(o=>o.id));
@@ -459,7 +476,8 @@ function Provider({children,spaceCode,isMgr}){
 
   // Batch add orders (for import)
   const batchAddOrders=useCallback((newOrders,replace)=>{
-    setOrders(prev=>replace?[...newOrders]:[...newOrders,...prev]);
+    const normalized=newOrders.map(o=>({...o,status:normalizeStatus(o.status)}));
+    setOrders(prev=>replace?[...normalized]:[...normalized,...prev]);
   },[]);
 
   const addExpense=useCallback((e)=>{

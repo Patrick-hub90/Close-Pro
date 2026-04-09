@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.27';
+var APP_VERSION='v3.28';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){localStorage.clear();
   // New version detected — clear all caches
@@ -584,12 +584,12 @@ function Provider({children,spaceCode,isMgr}){
       setConfig(prev=>{
         const c=newConfig(prev);
         // Only write to Firebase if config has real data
-        if(db&&c.closeuseCode)spaceRef(spaceCode).set({config:c},{merge:true}).catch(()=>{});
+        if(db)spaceRef(spaceCode).set({config:c},{merge:true}).catch(()=>{});
         return c;
       });
     }else{
       setConfig(newConfig);
-      if(db&&newConfig.closeuseCode)spaceRef(spaceCode).set({config:newConfig},{merge:true}).catch(()=>{});
+      if(db)spaceRef(spaceCode).set({config:newConfig},{merge:true}).catch(()=>{});
     }
   },[spaceCode]);
 
@@ -621,7 +621,7 @@ function Provider({children,spaceCode,isMgr}){
       const ts=Date.now();
       setLastSeen(ts);
       // lastSeen stored in Firebase only
-      if(db&&config.closeuseCode)spaceRef(spaceCode).set({lastSeen:ts},{merge:true}).catch(()=>{});
+      if(db)spaceRef(spaceCode).set({lastSeen:ts},{merge:true}).catch(()=>{});
     };
     beat();
     const t=setInterval(beat,30000);
@@ -1431,10 +1431,9 @@ function ReportPage(){
   const tauxConfirm=pAppeles.length>0?Math.round(pConfirmes.length/pAppeles.length*100):0;
   const diffConfirm=prevTauxConfirm!==null?tauxConfirm-prevTauxConfirm:null;
 
-  // All-time delivery
-  const allConfirmed=orders.filter(o=>[S.LIVRAISON,S.LIVRE].includes(o.status));
-  const allLivres=orders.filter(o=>o.status===S.LIVRE);
-  const tauxLiv=allConfirmed.length>0?Math.round(allLivres.length/allConfirmed.length*100):0;
+  // Delivery rate — period-filtered
+  const pConfirmedAll=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&[S.LIVRAISON,S.LIVRE].includes(a.status)));
+  const tauxLiv=pConfirmedAll.length>0?Math.round(pLivres.length/pConfirmedAll.length*100):0;
 
   // Dynamic salary
   const deliveryOk=tauxLiv>=80;
@@ -2105,10 +2104,6 @@ function ConfigPage({isManager}){
   const [newTpl,setNewTpl]=useState({name:'',situation:'custom',text:''});
 
   // Manager: profile
-  const [profName,setProfName]=useState(config.closeuseName||'');
-  const [profCode,setProfCode]=useState(config.closeuseCode||'');
-  const [profCountry,setProfCountry]=useState(config.country||'');
-  const [profSheet,setProfSheet]=useState(config.sheetUrls||[]);
   const [newSheetUrl,setNewSheetUrl]=useState('');
   const [newSheetLabel,setNewSheetLabel]=useState('');
   const [syncSheet,setSyncSheet]=useState(null);
@@ -2170,58 +2165,48 @@ function ConfigPage({isManager}){
         </details>
       </div>
 
-      {/* ======= MANAGER ONLY: Profil closeuse ======= */}
+      {/* ======= MANAGER: Fichier de commandes ======= */}
       {isManager&&(
         <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Profil closeuse</div>
-          <div style={{display:'flex',flexDirection:'column',gap:8}}>
-            <div>
-              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Code de connexion (ce que la closeuse tape pour se connecter)</label>
-              <input className="input" value={profCode} onChange={e=>setProfCode(e.target.value.toUpperCase())} placeholder="CM01" style={{marginTop:4}}/>
-            </div>
-            <div>
-              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Nom (affiché dans la barre d'espaces)</label>
-              <input className="input" value={profName} onChange={e=>setProfName(e.target.value)} placeholder="Closeuse Cameroun" style={{marginTop:4}}/>
-            </div>
-            <div>
-              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Pays</label>
-              <input className="input" value={profCountry} onChange={e=>setProfCountry(e.target.value)} placeholder="Cameroun" style={{marginTop:4}}/>
-            </div>
-
-            {/* Multiple Google Sheet links */}
-            <div>
-              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600,marginBottom:6,display:'block'}}>Google Sheets ({profSheet.length})</label>
-              {profSheet.map((sh,i)=>(
-                <div key={i} style={{display:'flex',gap:6,alignItems:'center',marginBottom:6}}>
-                  <span style={{fontSize:12,fontWeight:600,color:'var(--teal-vivid)',minWidth:50,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sh.label||'Sheet '+(i+1)}</span>
-                  <button onClick={()=>setSyncSheet(sh)} style={{padding:'4px 10px',borderRadius:6,background:'var(--green-bg)',color:'var(--green-vivid)',fontSize:11,fontWeight:600,flexShrink:0}}>Sync</button>
-                  <button onClick={()=>{const ns=[...profSheet];ns.splice(i,1);setProfSheet(ns)}} style={{width:22,height:22,borderRadius:6,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',padding:0,flexShrink:0}}>
-                    <div style={{width:10,height:10}}><I.x/></div>
-                  </button>
-                </div>
-              ))}
-              <div style={{display:'flex',gap:6,marginTop:4}}>
-                <input className="input" placeholder="Nom (ex: Gel XXL)" value={newSheetLabel} onChange={e=>setNewSheetLabel(e.target.value)} style={{flex:1,fontSize:12}}/>
-                <input className="input" placeholder="Lien Google Sheet" value={newSheetUrl} onChange={e=>setNewSheetUrl(e.target.value)} style={{flex:2,fontSize:11}}/>
-                <button onClick={()=>{
-                  if(newSheetUrl.trim()){setProfSheet(prev=>[...prev,{label:newSheetLabel||'Sheet',url:newSheetUrl.trim()}]);setNewSheetLabel('');setNewSheetUrl('')}
-                }} style={{padding:'0 12px',borderRadius:10,background:'var(--dark)',color:'#fff',fontWeight:700,flexShrink:0}}>
-                  <div style={{width:14,height:14}}><I.plus/></div>
-                </button>
+          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Fichier de commandes</div>
+          {/* Sheet list */}
+          {(config.sheetUrls||[]).map((sh,i)=>(
+            <div key={i} style={{display:'flex',gap:6,alignItems:'center',marginBottom:8,padding:'8px 0',borderBottom:'1px solid #f5f5f0'}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600}}>{sh.label||'Fichier '+(i+1)}</div>
+                <div style={{fontSize:10,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sh.url}</div>
               </div>
+              <button onClick={()=>setSyncSheet(sh)} style={{padding:'6px 12px',borderRadius:8,background:'var(--dark)',color:'#fff',fontSize:12,fontWeight:600,flexShrink:0}}>Sync</button>
+              <button onClick={()=>{const urls=(config.sheetUrls||[]).filter((_,j)=>j!==i);setConfig(prev=>({...prev,sheetUrls:urls}))}} style={{width:28,height:28,borderRadius:8,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,flexShrink:0}}>x</button>
             </div>
-
+          ))}
+          {(config.sheetUrls||[]).length===0&&(
+            <div style={{padding:12,textAlign:'center',background:'#f9f9f6',borderRadius:10,marginBottom:10}}>
+              <div style={{fontSize:12,color:'var(--muted)'}}>Aucun fichier. Ajoute un lien Google Sheets ci-dessous.</div>
+            </div>
+          )}
+          {/* Add sheet */}
+          <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:8}}>
+            <input className="input" placeholder="Nom du fichier (ex: Commandes Senegal)" value={newSheetLabel} onChange={e=>setNewSheetLabel(e.target.value)} style={{fontSize:13}}/>
+            <input className="input" placeholder="Lien Google Sheet" value={newSheetUrl} onChange={e=>setNewSheetUrl(e.target.value)} style={{fontSize:12}}/>
             <button onClick={()=>{
-              const newCode=profCode.trim().toUpperCase()||config.closeuseCode;
-              const newName=profName||config.closeuseName;
-              // Single batch config update
-              const newConfig={...config,closeuseCode:newCode,closeuseName:newName,country:profCountry,sheetUrls:profSheet};
-              setConfig(newConfig);
-              // Explicitly write to localStorage so Login can read it
-              // Config synced to Firebase via setConfigAndSync
-              alert('Profil enregistré — code de connexion : '+newCode);
-            }} style={{padding:12,borderRadius:12,background:'var(--dark)',color:'#fff',fontWeight:700,fontSize:14}}>Enregistrer le profil</button>
+              if(!newSheetUrl.trim()){alert('Colle le lien du Google Sheet');return}
+              const urls=[...(config.sheetUrls||[]),{label:newSheetLabel.trim()||'Fichier',url:newSheetUrl.trim()}];
+              setConfig(prev=>({...prev,sheetUrls:urls}));
+              setNewSheetLabel('');setNewSheetUrl('');
+            }} style={{padding:12,borderRadius:10,background:'var(--dark)',color:'#fff',fontWeight:700,fontSize:14}}>
+              Ajouter le fichier
+            </button>
           </div>
+          {/* Sync indicator */}
+          {window.__syncStatus&&window.__syncStatus.sheets>0&&(
+            <div style={{marginTop:10,padding:'8px 10px',borderRadius:8,background:'#f0fdf4',display:'flex',alignItems:'center',gap:6}}>
+              <div style={{width:8,height:8,borderRadius:4,background:window.__syncStatus.active?'var(--amber-vivid)':'var(--green-vivid)'}}/>
+              <span style={{fontSize:11,color:'var(--green-text)'}}>
+                {window.__syncStatus.active?'Synchronisation...':window.__syncStatus.lastSync?'Derniere synchro il y a '+Math.round((Date.now()-window.__syncStatus.lastSync)/1000)+'s':'Synchro toutes les 30s'}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -2771,18 +2756,18 @@ function ManagerDashboard(){
   const [tab,setTab]=useState('live');
 
   const today=new Date().toDateString();
-  const livres=orders.filter(o=>o.status===S.LIVRE);
-  const allConfirmed=orders.filter(o=>[S.LIVRAISON,S.LIVRE].includes(o.status));
+  const livresAuj=orders.filter(o=>o.deliveredAt?new Date(o.deliveredAt).toDateString()===today:o.status===S.LIVRE&&o.attempts.some(a=>new Date(a.ts).toDateString()===today&&a.status===S.LIVRE));
+  const confirmedAuj=orders.filter(o=>o.attempts.some(a=>new Date(a.ts).toDateString()===today&&[S.LIVRAISON,S.LIVRE].includes(a.status)));
   const appelesAuj=orders.filter(o=>o.attempts.some(a=>new Date(a.ts).toDateString()===today));
   const confirmesAuj=appelesAuj.filter(o=>[S.LIVRAISON,S.LIVRE].includes(o.status));
   const tauxConfirm=appelesAuj.length>0?Math.round(confirmesAuj.length/appelesAuj.length*100):0;
-  const tauxLiv=allConfirmed.length>0?Math.round(livres.length/allConfirmed.length*100):0;
+  const tauxLiv=confirmedAuj.length>0?Math.round(livresAuj.length/confirmedAuj.length*100):0;
   const deliveryOk=tauxLiv>=80;
   const salaryRate=calcSalaryRate(tauxConfirm,tauxLiv,config.salaryGrid);
 
-  const pCA=livres.reduce((s,o)=>(o.pricePaid||o.totalPrice)*o.quantity+s,0);
-  const pDelCost=livres.reduce((s,o)=>o.deliveryCost+s,0);
-  const pSalary=livres.length*salaryRate;
+  const pCA=livresAuj.reduce((s,o)=>(o.pricePaid||o.totalPrice)*o.quantity+s,0);
+  const pDelCost=livresAuj.reduce((s,o)=>o.deliveryCost+s,0);
+  const pSalary=livresAuj.length*salaryRate;
   const todayExp=expenses.filter(e=>new Date(e.date).toDateString()===today);
   const pExpTotal=todayExp.reduce((s,e)=>e.amount+s,0);
   const toVerse=pCA-pDelCost-pSalary-pExpTotal;
@@ -3298,20 +3283,7 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
               </button>
             );
           })}
-          <button onClick={()=>{
-            const name=prompt('Nom de la closeuse (ex: Marie Senegal)');
-            if(!name||!name.trim())return;
-            const code=prompt('Code de connexion (ex: SN01)');
-            if(!code||!code.trim())return;
-            const newAcc={code:code.trim().toUpperCase(),name:name.trim(),space:name.trim(),createdAt:new Date().toISOString()};
-            // Add to Firebase accounts
-            if(db)db.collection('global').doc('accounts').get().then(snap=>{
-              const list=snap.exists&&snap.data().list?snap.data().list:[];
-              list.push(newAcc);
-              db.collection('global').doc('accounts').set({list});
-            });
-            changeSpace(name.trim());
-          }} style={{padding:'5px 10px',borderRadius:10,fontSize:14,background:'rgba(255,255,255,0.08)',color:'#555',flexShrink:0}}>+</button>
+
         </div>
       )}
 

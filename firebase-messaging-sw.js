@@ -13,23 +13,29 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage(function(payload) {
-  const title = payload.notification?.title || payload.data?.title || 'ClosePro';
-  const body = payload.notification?.body || payload.data?.body || '';
+  var title = (payload.notification && payload.notification.title) || (payload.data && payload.data.title) || 'ClosePro';
+  var body = (payload.notification && payload.notification.body) || (payload.data && payload.data.body) || '';
   return self.registration.showNotification(title, {
     body: body,
-    tag: payload.data?.tag || 'closepro-' + Date.now(),
+    tag: 'closepro-bg-' + Date.now(),
     renotify: true,
-    vibrate: [200, 100, 200, 100, 200],
-    requireInteraction: true
+    vibrate: [300, 150, 300, 150, 300],
+    requireInteraction: true,
+    actions: [{ action: 'open', title: 'Ouvrir' }]
   });
 });
 
 self.addEventListener('notificationclick', function(e) {
   e.notification.close();
   e.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(cs) {
-      if (cs.length > 0) return cs[0].focus();
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].visibilityState === 'visible') return list[i].focus();
+      }
       return clients.openWindow('/');
     })
   );
 });
+
+self.addEventListener('install', function() { self.skipWaiting(); });
+self.addEventListener('activate', function(e) { e.waitUntil(clients.claim()); });

@@ -274,12 +274,8 @@ async function initFCM(spaceCode){
       localStorage.setItem('deviceId',deviceId);
       db.collection('spaces').doc(spaceCode).collection('fcm_tokens').doc(deviceId).set({token:fcmToken,updatedAt:new Date().toISOString()});
     }
-    // Foreground messages
-    messaging.onMessage((payload)=>{
-      const title=payload.notification?.title||payload.data?.title||'ClosePro';
-      const body=payload.notification?.body||payload.data?.body||'';
-      playNotifSound();vibrate([200,100,200,100,200]);
-    });
+    // Foreground messages — do nothing, NotificationPopup handles display
+    messaging.onMessage(()=>{});
   }catch(e){console.log('FCM init:',e)}
 }
 
@@ -370,13 +366,24 @@ function Provider({children,spaceCode,isMgr}){
   const updateOrder=useCallback((id,upd)=>{
     const updated={...upd,updatedAt:new Date().toISOString()};
     if(db)ordersRef(spaceCode).doc(id).update(updated).catch(()=>{});
-    setOrders(prev=>prev.map(o=>o.id===id?{...o,...updated}:o));
+    setOrders(prev=>{
+      const order=prev.find(o=>o.id===id);
+      // Push for important status changes
+      if(order&&upd.status&&upd.status!==order.status){
+        const name=order.fullName||'Client';
+        if(upd.status===S.LIVRAISON)sendPush('Commande confirmee ✅',`${name} — ${order.productName}`,spaceCode);
+        if(upd.status===S.LIVRE)sendPush('Livraison effectuee 📦',`${name} — ${((order.pricePaid||order.totalPrice)*order.quantity).toLocaleString()}F`,spaceCode);
+        if(upd.status===S.ANNULE&&order.status===S.LIVRAISON)sendPush('Retournement ⚠',`${name} — confirmee puis annulee`,spaceCode);
+      }
+      return prev.map(o=>o.id===id?{...o,...updated}:o);
+    });
   },[spaceCode]);
 
   const addOrder=useCallback((o)=>{
     const newOrder={...o,id:gid(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:S.NEW,attempts:[],timerExp:null,reportDate:null,comment:'',pricePaid:null,deliveryZone:'',deliveryCost:0};
     if(db)ordersRef(spaceCode).doc(newOrder.id).set(newOrder).catch(()=>{});
     setOrders(prev=>[newOrder,...prev]);
+    sendPush('Nouvelle commande 📋',`${o.fullName||'Client'} — ${o.productName||'Produit'}`,spaceCode);
   },[spaceCode]);
 
   const addExpense=useCallback((e)=>{
@@ -397,7 +404,7 @@ function Provider({children,spaceCode,isMgr}){
     // Push to other devices
     let plainText=text;
     try{const p=JSON.parse(text);plainText=p.text||text}catch(e){}
-    sendPush('Nouveau message',plainText,spaceCode);
+    sendPush('💬 Nouveau message',plainText,spaceCode);
   },[spaceCode]);
 
   const reactMsg=useCallback((id,reaction)=>{
@@ -498,13 +505,11 @@ function NotifEngine({isMgr}){
   // Init FCM on mount
   useEffect(()=>{if(spaceCode)initFCM(spaceCode)},[spaceCode]);
 
-  // Detect new orders → sound locally + push to other devices
+  // Detect new orders → local sound only (push is sent by the device that creates the order)
   const prevOrderCountRef=useRef(orders.length);
   useEffect(()=>{
     if(orders.length>prevOrderCountRef.current){
-      const newCount=orders.length-prevOrderCountRef.current;
-      alert360('Nouvelle commande',`${newCount} nouvelle${newCount>1?'s':''} commande${newCount>1?'s':''}`);
-      sendPush('Nouvelle commande',`${newCount} commande${newCount>1?'s':''} recue${newCount>1?'s':''}`,spaceCode);
+      alert360();
     }
     prevOrderCountRef.current=orders.length;
   },[orders.length]);

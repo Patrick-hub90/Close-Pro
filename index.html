@@ -669,7 +669,7 @@ function Provider({children,spaceCode,isMgr}){
   const [spacesStatus,setSpacesStatus]=useState({});
   useEffect(()=>{
     if(!db)return;
-    const allSpaces=gs('spaces',['CM01','SN01']);
+    const allSpaces=gs('spaces',[spaceCode]);
     const unsubs=allSpaces.map(s=>
       db.collection('spaces').doc(s).onSnapshot(snap=>{
         if(snap.exists){
@@ -774,16 +774,17 @@ function OrderCard({order,onClick}){
       borderBottom:'1px solid #EFEFEA',cursor:'pointer',
       transition:'background .15s',position:'relative',
     }}>
-      {/* Row 1: Order number + Price */}
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:3}}>
-        <span style={{fontSize:16,fontWeight:700,color:'var(--text)',letterSpacing:-0.3}}>{order.orderNumber}</span>
-        <span style={{fontSize:15,fontWeight:700,color:'var(--text)',letterSpacing:-0.2}}>{(order.pricePaid||order.totalPrice).toLocaleString()} F CFA</span>
+      {/* Row 1: Order number + Client name + Price */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
+        <div style={{display:'flex',alignItems:'baseline',gap:6}}>
+          <span style={{fontSize:15,fontWeight:700,color:'var(--text)',letterSpacing:-0.3}}>{order.orderNumber}</span>
+          <span style={{fontSize:14,fontWeight:600,color:'#333'}}>{order.fullName||'—'}</span>
+        </div>
+        <span style={{fontSize:15,fontWeight:700,color:'var(--text)',letterSpacing:-0.2}}>{(order.pricePaid||order.totalPrice).toLocaleString()} F</span>
       </div>
 
-      {/* Row 2: Client name • quantity • time */}
-      <div style={{fontSize:13,color:'#555',marginBottom:3,display:'flex',alignItems:'center',flexWrap:'wrap',gap:2}}>
-        <span style={{fontWeight:500,color:'var(--text)'}}>{order.fullName}</span>
-        <span style={{color:'#ccc',margin:'0 3px'}}>•</span>
+      {/* Row 2: quantity • time */}
+      <div style={{fontSize:13,color:'#555',marginBottom:3,display:'flex',alignItems:'center',gap:2}}>
         <span>{order.quantity} article{order.quantity>1?'s':''}</span>
         <span style={{color:'#ccc',margin:'0 3px'}}>•</span>
         <span>{fmtTime(order.createdAt)}</span>
@@ -959,6 +960,30 @@ function OrderDetail({order,onClose}){
           </div>}
         </div>
 
+        {/* Price + delivery cost — always editable */}
+        <div style={{background:'#f9f9f6',borderRadius:14,padding:14,marginBottom:14}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div>
+              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Prix client</label>
+              <input className="input" type="number" value={pricePaid} onChange={e=>setPricePaid(e.target.value)} onBlur={()=>updateOrder(order.id,{pricePaid:Number(pricePaid)})} style={{marginTop:4,fontWeight:700}}/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Zone livraison</label>
+              <select className="select" value={zone} onChange={e=>{setZone(e.target.value);const zp=e.target.value==='custom'?Number(customZP):config.zones.find(z=>z.name===e.target.value)?.price||0;updateOrder(order.id,{deliveryZone:e.target.value==='custom'?'Personnalisé':e.target.value,deliveryCost:zp})}} style={{marginTop:4}}>
+                <option value="">— Zone —</option>
+                {config.zones.map(z=><option key={z.name} value={z.name}>{z.name} — {z.price.toLocaleString()}F</option>)}
+                <option value="custom">Personnalisé</option>
+              </select>
+            </div>
+          </div>
+          {zone==='custom'&&(
+            <div style={{marginTop:8}}>
+              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Montant livraison personnalisé</label>
+              <input className="input" type="number" placeholder="Montant" value={customZP} onChange={e=>setCustomZP(e.target.value)} onBlur={()=>updateOrder(order.id,{deliveryCost:Number(customZP),deliveryZone:'Personnalisé'})} style={{marginTop:4}}/>
+            </div>
+          )}
+        </div>
+
         {/* Delivery return buttons */}
         {order.status===S.LIVRAISON&&!status&&(
           <div style={{marginBottom:16}}>
@@ -989,24 +1014,7 @@ function OrderDetail({order,onClose}){
           </div>
         )}
 
-        {/* Livraison details */}
-        {status===S.LIVRAISON&&(
-          <div style={{background:'var(--teal-bg)',borderRadius:14,padding:14,marginBottom:14}}>
-            <div style={{marginBottom:10}}>
-              <label style={{fontSize:12,color:'var(--teal-text)',fontWeight:600}}>Prix payé par le client</label>
-              <input className="input" type="number" value={pricePaid} onChange={e=>setPricePaid(e.target.value)} style={{marginTop:4}}/>
-            </div>
-            <div>
-              <label style={{fontSize:12,color:'var(--teal-text)',fontWeight:600}}>Zone de livraison</label>
-              <select className="select" value={zone} onChange={e=>setZone(e.target.value)} style={{marginTop:4}}>
-                <option value="">— Choisir zone —</option>
-                {config.zones.map(z=><option key={z.name} value={z.name}>{z.name} — {z.price.toLocaleString()}F</option>)}
-                <option value="custom">Personnalisé</option>
-              </select>
-              {zone==='custom'&&<input className="input" type="number" placeholder="Montant livraison" value={customZP} onChange={e=>setCustomZP(e.target.value)} style={{marginTop:6}}/>}
-            </div>
-          </div>
-        )}
+        {/* Livraison details — price/zone already above */}
 
         {/* Timer / Date picker — unified for Injoignable, Rappelé, Reporté */}
         {[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(status)&&(
@@ -2137,7 +2145,7 @@ function ConfigPage({isManager}){
               // Update space metadata
               const meta=gs('spacesMeta',{});
               meta[spaceCode]={name:newName,code:newCode};
-              ss('spacesMeta',meta);
+              ss('spacesMeta',meta);if(db)db.collection('global').doc('spaces').set({meta},{merge:true}).catch(()=>{});
               alert('Profil enregistré — code de connexion : '+newCode);
             }} style={{padding:12,borderRadius:12,background:'var(--dark)',color:'#fff',fontWeight:700,fontSize:14}}>Enregistrer le profil</button>
           </div>
@@ -3010,22 +3018,24 @@ function Login({onLogin}){
 
     if(blocked){setError(`Bloqué — réessaye dans ${Math.ceil(blockTimer/60)} min`);return}
 
-    // Valid codes = ONLY current codes from metadata and config (not internal space IDs)
-    const spaces=gs('spaces',['CM01','SN01']);
+    // Valid codes = check local spaces, metadata, config, or use code directly
+    const spaces=gs('spaces',[]);
     const meta=gs('spacesMeta',{});
 
-    const matchedSpace=spaces.find(s=>{
-      // Check metadata code first
+    let matchedSpace=spaces.find(s=>{
       if(meta[s]&&meta[s].code===inputCode)return true;
-      // Check stored config code
       const cfg=gs('config_'+s,null);
       if(cfg&&cfg.closeuseCode===inputCode)return true;
-      // Fallback: space ID only if no custom code was ever set
       if(!meta[s]&&!cfg)return s===inputCode;
       return false;
     });
 
+    // If not found locally, use the code directly as spaceCode (new device or new space)
+    if(!matchedSpace)matchedSpace=inputCode;
+
     if(matchedSpace){
+      // Register this space locally
+      if(!spaces.includes(matchedSpace)){spaces.push(matchedSpace);ss('spaces',spaces)}
       ss('loginAttempts',[]);
       onLogin(matchedSpace);
     }else{
@@ -3070,11 +3080,27 @@ function Login({onLogin}){
 function App(){
   const [user,setUser]=useState(()=>gs('user',null));
   const [tab,setTab]=useState(()=>{const u=gs('user',null);return u&&u.code==='MANAGER'?'dashboard':'orders'});
-  const [spaceCode,setSpaceCode]=useState(()=>{const u=gs('user',null);return u?u.code==='MANAGER'?(gs('mgrSpace','CM01')):u.code:null});
+  const [spaceCode,setSpaceCode]=useState(()=>{const u=gs('user',null);return u?u.code==='MANAGER'?(gs('mgrSpace',null)):u.code:null});
+
+  // Load spaces from Firebase when manager connects
+  useEffect(()=>{
+    if(!db)return;
+    db.collection('global').doc('spaces').onSnapshot(snap=>{
+      if(snap.exists){
+        const d=snap.data();
+        if(d.list&&d.list.length>0){
+          ss('spaces',d.list);
+          if(d.meta)ss('spacesMeta',d.meta);
+          // Set first space if none selected
+          if(!spaceCode&&user&&user.code==='MANAGER'){setSpaceCode(d.list[0]);ss('mgrSpace',d.list[0])}
+        }
+      }
+    });
+  },[user]);
 
   if(!user)return <Login onLogin={(code)=>{
     const u={code};ss('user',u);setUser(u);
-    if(code==='MANAGER'){setTab('dashboard');setSpaceCode(gs('mgrSpace','CM01'))}
+    if(code==='MANAGER'){setTab('dashboard');const s=gs('mgrSpace',null)||gs('spaces',[])[0]||'DEFAULT';setSpaceCode(s)}
     else{setTab('orders');setSpaceCode(code)}
   }}/>;
 
@@ -3082,14 +3108,21 @@ function App(){
   const changeSpace=(code)=>{setSpaceCode(code);ss('mgrSpace',code)};
 
   return(
-    <Provider key={spaceCode} spaceCode={spaceCode} isMgr={isMgr}>
-      <AppInner isMgr={isMgr} tab={tab} setTab={setTab} setUser={setUser} spaceCode={spaceCode} changeSpace={changeSpace}/>
+    <Provider key={spaceCode} spaceCode={spaceCode||'DEFAULT'} isMgr={isMgr}>
+      <AppInner isMgr={isMgr} tab={tab} setTab={setTab} setUser={setUser} spaceCode={spaceCode||'DEFAULT'} changeSpace={changeSpace}/>
     </Provider>
   );
 }
 
 function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
   const {messages,orders,now,config,spacesStatus}=useContext(Ctx);
+
+  // Sync spaces list to Firebase
+  const syncSpaces=(list)=>{
+    ss('spaces',list);
+    const meta=gs('spacesMeta',{});
+    if(db)db.collection('global').doc('spaces').set({list,meta},{merge:true}).catch(()=>{});
+  };
 
   const unreadMsgs=messages.filter(m=>m.from===(isMgr?'closeuse':'manager')&&!m.seen).length;
   const nonAppeles=orders.filter(o=>o.status===S.NEW||(o.timerExp&&now>o.timerExp&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status))).length;
@@ -3101,9 +3134,13 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
     const localSeen=gs('lastSeen_'+code,0);
     return localSeen?(now-localSeen)<60000:false;
   };
-  const [spaces,setSpaces]=useState(()=>gs('spaces',['CM01','SN01']));
+  const [spaces,setSpaces]=useState(()=>gs('spaces',[spaceCode]));
   const meta=gs('spacesMeta',{});
-  useEffect(()=>{setSpaces(gs('spaces',['CM01','SN01']))},[config]);
+  useEffect(()=>{
+    const s=gs('spaces',[spaceCode]);
+    if(!s.includes(spaceCode)){s.push(spaceCode);syncSpaces(s)}
+    setSpaces(s);
+  },[config,spaceCode]);
 
   const getSpaceName=(id)=>meta[id]?.name||id;
   const getSpaceCode=(id)=>meta[id]?.code||id;
@@ -3116,7 +3153,7 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
             const online=isOnline(s);
             const name=getSpaceName(s);
             return(
-              <button key={s} onClick={()=>changeSpace(s)} onContextMenu={e=>{e.preventDefault();if(spaces.length>1&&confirm(`Supprimer l'espace "${name}" ?`)){const ns=spaces.filter(x=>x!==s);ss('spaces',ns);setSpaces(ns);if(spaceCode===s)changeSpace(ns[0])}}} style={{padding:'5px 12px',borderRadius:10,fontSize:12,fontWeight:spaceCode===s?700:400,background:spaceCode===s?'#fff':'rgba(255,255,255,0.08)',color:spaceCode===s?'#111':'#888',display:'flex',alignItems:'center',gap:6,flexShrink:0,border:spaceCode===s?'none':'1px solid rgba(255,255,255,0.1)'}}>
+              <button key={s} onClick={()=>changeSpace(s)} onContextMenu={e=>{e.preventDefault();if(spaces.length>1&&confirm(`Supprimer l'espace "${name}" ?`)){const ns=spaces.filter(x=>x!==s);syncSpaces(ns);setSpaces(ns);if(spaceCode===s)changeSpace(ns[0])}}} style={{padding:'5px 12px',borderRadius:10,fontSize:12,fontWeight:spaceCode===s?700:400,background:spaceCode===s?'#fff':'rgba(255,255,255,0.08)',color:spaceCode===s?'#111':'#888',display:'flex',alignItems:'center',gap:6,flexShrink:0,border:spaceCode===s?'none':'1px solid rgba(255,255,255,0.1)'}}>
                 <span style={{width:7,height:7,borderRadius:4,background:online?'#22C55E':'#555',flexShrink:0}}/>
                 {name}
               </button>
@@ -3128,7 +3165,7 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
             const id='sp_'+gid().slice(0,6);
             const code=prompt('Code de connexion (ex: SN01)')||id;
             const ns=[...spaces,id];
-            ss('spaces',ns);
+            syncSpaces(ns);
             const m=gs('spacesMeta',{});
             m[id]={name:name.trim(),code:code.trim().toUpperCase()};
             ss('spacesMeta',m);

@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.28';
+var APP_VERSION='v3.29';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){localStorage.clear();
   // New version detected — clear all caches
@@ -2860,7 +2860,7 @@ function ManagerDashboard(){
             </div>
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
               <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Livrées (global)</div>
-              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--green-vivid)'}}>{livres.length}</div>
+              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--green-vivid)'}}>{livresAuj.length}</div>
               <div style={{fontSize:11,fontWeight:600,marginTop:2,color:deliveryOk?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxLiv}% livraison {deliveryOk?'✓':'✗'}</div>
             </div>
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
@@ -2976,7 +2976,7 @@ function ManagerDashboard(){
             {[
               {l:"CA total",v:pCA,c:'var(--green-vivid)',sign:'+'},
               {l:"Coûts livraison",v:pDelCost,c:'var(--red-vivid)',sign:'-'},
-              {l:`Salaire (${salaryRate.toLocaleString()}F × ${livres.length})`,v:pSalary,c:'var(--red-vivid)',sign:'-'},
+              {l:`Salaire (${salaryRate.toLocaleString()}F × ${livresAuj.length})`,v:pSalary,c:'var(--red-vivid)',sign:'-'},
               {l:"Dépenses",v:pExpTotal,c:'var(--red-vivid)',sign:'-'},
             ].map((r,i)=>(
               <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid #f5f5f0',fontSize:13}}>

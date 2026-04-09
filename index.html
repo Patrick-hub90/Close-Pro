@@ -10,9 +10,9 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.23';
+var APP_VERSION='v3.25';
 var storedVersion=localStorage.getItem('cp_appVersion');
-if(storedVersion&&storedVersion!==APP_VERSION){
+if(storedVersion&&storedVersion!==APP_VERSION){localStorage.clear();
   // New version detected — clear all caches
   localStorage.setItem('cp_appVersion',APP_VERSION);
   if('caches' in window)caches.keys().then(function(k){k.forEach(function(n){caches.delete(n)})});
@@ -3175,13 +3175,13 @@ function SetupScreen({onCreated,onLogout}){
   const [name,setName]=useState('');
   const [loading,setLoading]=useState(true);
 
+
   useEffect(()=>{
     if(!db){setLoading(false);return}
     const unsub=db.collection('global').doc('accounts').onSnapshot(snap=>{
       if(snap.exists&&snap.data().list&&snap.data().list.length>0){
         const accs=snap.data().list;
         setAccounts(accs);
-        // Auto-select first space
         onCreated(accs[0].space);
       }
       setLoading(false);
@@ -3216,7 +3216,7 @@ function SetupScreen({onCreated,onLogout}){
 
       <div style={{width:'100%',maxWidth:300,display:'flex',flexDirection:'column',gap:10}}>
         <input className="input" placeholder="Code de connexion (ex: SN01)" value={code} onChange={e=>setCode(e.target.value.toUpperCase())} style={{fontSize:16,fontWeight:700,letterSpacing:3,textAlign:'center',padding:14}}/>
-        <input className="input" placeholder="Nom de l'espace (ex: Closeuse Senegal)" value={name} onChange={e=>setName(e.target.value)} style={{fontSize:14,padding:12}}/>
+        <input className="input" placeholder="Nom (ex: Closeuse Senegal)" value={name} onChange={e=>setName(e.target.value)} style={{fontSize:14,padding:12}}/>
         <button onClick={create} style={{padding:14,borderRadius:14,background:'#fff',color:'#111',fontWeight:700,fontSize:15}}>
           Creer l'espace
         </button>

@@ -75,6 +75,9 @@ const S={
   LIVRE:'Livré',ECHEC:'Échec livraison',ABANDONNE:'Abandonné'
 };
 
+// Normalize accents: é→e, è→e, etc.
+const norm=t=>t.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+
 const STATUS_STYLE={
   [S.NEW]:{bg:'var(--blue-bg)',color:'var(--blue-text)',dot:'var(--blue-vivid)'},
   [S.LIVRAISON]:{bg:'var(--teal-bg)',color:'var(--teal-text)',dot:'var(--teal-vivid)'},
@@ -338,6 +341,7 @@ function Provider({children,spaceCode,isMgr}){
     // Orders listener — MERGE Firebase + local, never lose data
     const migrationDoneRef={current:false};
     unsubs.push(ordersRef(spaceCode).orderBy('createdAt','desc').onSnapshot(snap=>{
+      if(suppressRef.current)return; // Skip during delete operations
       const fbData=snap.docs.map(d=>({id:d.id,...d.data()}));
       setOrders(prev=>{
         // Merge: Firebase wins for existing IDs, keep local-only orders
@@ -413,7 +417,7 @@ function Provider({children,spaceCode,isMgr}){
   // Import with full data (status, comments, date) — index for ordering
   const importOrder=useCallback((o,index)=>{
     const id=gid();
-    const status=o.status&&o.status!=='new'?o.status:S.NEW;
+    const status=o.status&&o.status!=='new'&&o.status!==S.NEW?o.status:S.NEW;
     const comment=o.comment||'';
     // Use today's date with offset so sheet order is preserved (first row = most recent)
     const now=new Date();
@@ -425,17 +429,32 @@ function Provider({children,spaceCode,isMgr}){
   },[spaceCode]);
 
   // Clear all orders
+  const suppressRef=useRef(false);
   const clearAllOrders=useCallback(()=>{
-    if(db){ordersRef(spaceCode).get().then(snap=>{snap.forEach(doc=>doc.ref.delete())}).catch(()=>{})}
+    suppressRef.current=true;
+    if(db){
+      const batch=db.batch();
+      ordersRef(spaceCode).get().then(snap=>{
+        snap.forEach(doc=>batch.delete(doc.ref));
+        return batch.commit();
+      }).catch(()=>{});
+    }
     setOrders([]);
     ss('orders_'+spaceCode,[]);
+    setTimeout(()=>{suppressRef.current=false},5000);
   },[spaceCode]);
 
   // Delete specific orders by ID
   const deleteOrders=useCallback((ids)=>{
+    suppressRef.current=true;
     const idSet=new Set(ids);
-    if(db)ids.forEach(id=>ordersRef(spaceCode).doc(id).delete().catch(()=>{}));
+    if(db){
+      const batch=db.batch();
+      ids.forEach(id=>batch.delete(ordersRef(spaceCode).doc(id)));
+      batch.commit().catch(()=>{});
+    }
     setOrders(prev=>prev.filter(o=>!idSet.has(o.id)));
+    setTimeout(()=>{suppressRef.current=false},5000);
   },[spaceCode]);
 
   // Batch add orders (for import)
@@ -1684,7 +1703,7 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       if(!rawNum)return;
       const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
       if(mode==='add'&&(existingMap[orderNum]||existingMap[rawNum])){skip++;return}
-      const st=mapping.statut?mapStatus(row[mapping.statut]):'new';
+      const st=mapping.statut?mapStatus(row[mapping.statut]):S.NEW;
       const comment=mapping.commentaire?row[mapping.commentaire]||'':'';
       const dateStr=mapping.date?row[mapping.date]||'':'';
       let actionDate=null;
@@ -1792,7 +1811,7 @@ function useAutoSync(){
             if(!rawNum)return;
             const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
             if(existing.has(orderNum)||existing.has(rawNum))return;
-            const mapSt=(txt)=>{if(!txt)return S.NEW;const t=txt.toLowerCase().trim();if(t.includes('livraison en cours'))return S.LIVRAISON;if(t.includes('livre'))return S.LIVRE;if(t.includes('injoignable'))return S.INJOIGNABLE;if(t.includes('rappel'))return S.RAPPELE;if(t.includes('report'))return S.REPORTE;if(t.includes('annul'))return S.ANNULE;return S.NEW};
+            const mapSt=(txt)=>{if(!txt)return S.NEW;const t=norm(txt);if(t.includes('livraison en cours'))return S.LIVRAISON;if(t.includes('livre'))return S.LIVRE;if(t.includes('injoignable'))return S.INJOIGNABLE;if(t.includes('rappel'))return S.RAPPELE;if(t.includes('report'))return S.REPORTE;if(t.includes('annul'))return S.ANNULE;return S.NEW};
             const st=m.statut?mapSt(row[m.statut]):S.NEW;
             const comment=m.commentaire?row[m.commentaire]||'':'';
             const order=importOrder({orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',status:st,comment:comment},data.rows.length-idx);

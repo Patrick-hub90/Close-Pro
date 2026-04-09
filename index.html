@@ -419,17 +419,14 @@ function Provider({children,spaceCode,isMgr}){
       });
     },err=>console.log('Expenses offline:',err)));
 
-    // Config listener — merge properly per space
+    // Config listener — Firebase is source of truth
     unsubs.push(spaceRef(spaceCode).onSnapshot(snap=>{
       if(snap.exists){
         const d=snap.data();
         if(d.config){
-          const local=gs('config_'+spaceCode,null)||{};
-          setConfig(()=>{
-            const merged={...loadConfig(),...d.config,...local};
-            // Sheet config: use what's stored for THIS space
-            merged.sheetUrls=local.sheetUrls||d.config.sheetUrls||[];
-            merged.sheetMappings=local.sheetMappings||d.config.sheetMappings||{};
+          setConfig(prev=>{
+            // Firebase config wins, fill gaps with defaults
+            const merged={...loadConfig(),...d.config};
             return merged;
           });
         }

@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.35';
+var APP_VERSION='v3.38';
 localStorage.setItem('cp_appVersion',APP_VERSION);
 </script>
 <meta name="theme-color" content="#111111">
@@ -266,6 +266,9 @@ function spaceRef(code){return db?db.collection('spaces').doc(code):null}
 function ordersRef(code){return db?spaceRef(code).collection('orders'):null}
 function msgsRef(code){return db?spaceRef(code).collection('messages'):null}
 function expRef(code){return db?spaceRef(code).collection('expenses'):null}
+function activityRef(code){return db?spaceRef(code).collection('activity'):null}
+function todayKey(){return new Date().toISOString().slice(0,10)}
+const FV=typeof firebase!=='undefined'&&firebase.firestore?firebase.firestore.FieldValue:null;
 
 function Provider({children,spaceCode,isMgr}){
   const [orders,setOrders]=useState([]);
@@ -274,6 +277,8 @@ function Provider({children,spaceCode,isMgr}){
   const [messages,setMessages]=useState([]);
   const [now,setNow]=useState(Date.now());
   const [fbReady,setFbReady]=useState(false);
+  const [dailyStats,setDailyStats]=useState({});
+  const [activity,setActivity]=useState([]);
 
   // Reload data when spaceCode changes (manager switches closeuse)
   const prevSpace=useRef(spaceCode);
@@ -329,6 +334,18 @@ function Provider({children,spaceCode,isMgr}){
       });
     },err=>console.log('Expenses offline:',err)));
 
+    // Daily stats listener
+    unsubs.push(spaceRef(spaceCode).collection('dailyStats').doc(todayKey()).onSnapshot(snap=>{
+      if(snap.exists)setDailyStats(snap.data());
+      else setDailyStats({});
+    },()=>{}));
+
+    // Activity listener (recent, limit 100)
+    unsubs.push(activityRef(spaceCode).orderBy('ts','desc').limit(100).onSnapshot(snap=>{
+      const today=todayKey();
+      setActivity(snap.docs.map(d=>({id:d.id,...d.data()})).filter(a=>a.date===today));
+    },()=>{}));
+
     // Config listener — Firebase is source of truth
     unsubs.push(spaceRef(spaceCode).onSnapshot(snap=>{
       if(snap.exists){
@@ -351,7 +368,31 @@ function Provider({children,spaceCode,isMgr}){
     if(db)ordersRef(spaceCode).doc(id).update(updated).catch(()=>{});
     setOrders(prev=>{
       const order=prev.find(o=>o.id===id);
-      // Push for important status changes
+      // Log activity to Firebase when status changes
+      if(order&&upd.status&&upd.status!==order.status&&db&&FV){
+        const day=todayKey();
+        // Activity log entry
+        activityRef(spaceCode).add({
+          orderId:id,
+          orderNumber:order.orderNumber||'',
+          fullName:order.fullName||'',
+          productName:order.productName||'',
+          fromStatus:order.status,
+          toStatus:upd.status,
+          comment:upd.comment||'',
+          ts:new Date().toISOString(),
+          date:day
+        }).catch(()=>{});
+        // Update daily stats counters
+        const statsDoc=spaceRef(spaceCode).collection('dailyStats').doc(day);
+        const statusKey={
+          [S.NEW]:'nouvelles',[S.LIVRAISON]:'confirmes',[S.LIVRE]:'livres',
+          [S.INJOIGNABLE]:'injoignables',[S.RAPPELE]:'rappeles',[S.REPORTE]:'reportes',
+          [S.ANNULE]:'annules',[S.ECHEC]:'echecs',[S.ABANDONNE]:'abandonnes'
+        };
+        const key=statusKey[upd.status];
+        if(key)statsDoc.set({[key]:FV.increment(1),appeles:FV.increment(1),lastUpdate:new Date().toISOString()},{merge:true}).catch(()=>{});
+      }
       return prev.map(o=>o.id===id?{...o,...updated}:o);
     });
   },[spaceCode]);
@@ -466,7 +507,12 @@ function Provider({children,spaceCode,isMgr}){
           updatedAt:new Date().toISOString(),
         };
         // Write to Firebase immediately
-        if(db)ordersRef(spaceCode).doc(id).set(order).catch(()=>{});
+        if(db){
+          ordersRef(spaceCode).doc(id).set(order).catch(()=>{});
+          // Log new order in daily stats
+          const day=todayKey();
+          if(FV)spaceRef(spaceCode).collection('dailyStats').doc(day).set({nouvelles:FV.increment(1),lastUpdate:new Date().toISOString()},{merge:true}).catch(()=>{});
+        }
         newOrders.push(order);
         existingKeys.add(key);
         existingFingerprints.add(fp);
@@ -590,7 +636,7 @@ function Provider({children,spaceCode,isMgr}){
     return()=>unsubs.forEach(u=>u());
   },[]);
 
-  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,deleteOrders,syncFromSheet,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus}}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,deleteOrders,syncFromSheet,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus,dailyStats,activity}}>{children}</Ctx.Provider>;
 }
 
 // ============== NOTIFICATION ENGINE ==============
@@ -736,7 +782,7 @@ function OrderCard({order,onClick}){
 
 // ============== ORDER DETAIL MODAL ==============
 function OrderDetail({order,onClose}){
-  const {updateOrder,config,now}=useContext(Ctx);
+  const {updateOrder,config,now,orders}=useContext(Ctx);
   const [status,setStatus]=useState('');
   const [comment,setComment]=useState('');
   const [pricePaid,setPricePaid]=useState(order.pricePaid||order.totalPrice);
@@ -857,7 +903,12 @@ function OrderDetail({order,onClose}){
                   if(p)updateOrder(order.id,{productId:p.id,productName:p.name,totalPrice:p.price||order.totalPrice});
                 }} style={{fontSize:13,fontWeight:600,padding:4,marginTop:2}}>
                   <option value="">{order.productName||'— Choisir —'}</option>
-                  {(config.products||[]).map(p=><option key={p.id} value={p.id}>{p.name} — {(p.price||0).toLocaleString()}F</option>)}
+                  {(config.products||[]).map(p=>{
+                    const cancelledSt=[S.ANNULE,S.ECHEC,S.ABANDONNE];
+                    const used=orders.filter(o=>{const mt=o.productId===p.id||norm(o.productName||'')===norm(p.name);return mt&&!cancelledSt.includes(o.status)}).reduce((s,o)=>s+(o.quantity||1),0);
+                    const rest=Math.max(0,(p.stock||0)-used);
+                    return <option key={p.id} value={p.id}>{p.name} — {(p.price||0).toLocaleString()}F ({rest} en stock)</option>
+                  })}
                 </select>
               ):(
                 <div style={{fontWeight:600}}>{order.productName}</div>
@@ -1667,8 +1718,7 @@ function ReportPage(){
         <div style={{fontSize:15,fontWeight:700,marginBottom:10}}>Stock restant</div>
         {config.products.map((p,i)=>{
           const delivered=orders.filter(o=>o.status===S.LIVRE).filter(o=>{
-            const aliases=[p.name,...(p.aliases||[])];
-            return aliases.some(a=>o.productName&&o.productName.toLowerCase().includes(a.toLowerCase()));
+            return o.productId===p.id||norm(o.productName||'')===norm(p.name);
           }).reduce((s,o)=>s+o.quantity,0);
           const remaining=p.stock-delivered;
           const pct=p.stock>0?remaining/p.stock*100:0;
@@ -2047,9 +2097,7 @@ function ConfigPage({isManager}){
 
   // Manager: product form
   const [showAddProd,setShowAddProd]=useState(false);
-  const [newProd,setNewProd]=useState({name:'',price:'',stock:'',aliases:''});
-  const [editAlias,setEditAlias]=useState(null);
-  const [newAlias,setNewAlias]=useState('');
+  const [newProd,setNewProd]=useState({name:'',price:'',stock:''});
 
   // WhatsApp templates
   const [editTpl,setEditTpl]=useState(null);
@@ -2200,63 +2248,56 @@ function ConfigPage({isManager}){
                 <input className="input" type="number" placeholder="Prix" value={newProd.price} onChange={e=>setNewProd({...newProd,price:e.target.value})} style={{flex:1}}/>
                 <input className="input" type="number" placeholder="Stock" value={newProd.stock} onChange={e=>setNewProd({...newProd,stock:e.target.value})} style={{flex:1}}/>
               </div>
-              <input className="input" placeholder="Noms marketing (séparés par des virgules)" value={newProd.aliases} onChange={e=>setNewProd({...newProd,aliases:e.target.value})} style={{marginBottom:8,fontSize:12}}/>
+
               <button onClick={()=>{
                 if(!newProd.name||!newProd.price){alert('Nom et prix requis');return}
-                const prod={id:'p'+gid(),name:newProd.name,price:Number(newProd.price),stock:Number(newProd.stock)||0,aliases:newProd.aliases?newProd.aliases.split(',').map(a=>a.trim()).filter(Boolean):[]};
+                const prod={id:'p'+gid(),name:newProd.name,price:Number(newProd.price),stock:Number(newProd.stock)||0};
                 upd('products',[...config.products,prod]);
-                setNewProd({name:'',price:'',stock:'',aliases:''});
+                setNewProd({name:'',price:'',stock:''});
                 setShowAddProd(false);
               }} style={{width:'100%',padding:10,borderRadius:10,background:'var(--green-vivid)',color:'#fff',fontWeight:700,fontSize:13}}>Ajouter le produit</button>
             </div>
           )}
 
-          {config.products.map((p,i)=>(
+          {config.products.map((p,i)=>{
+            // Calculate used stock from orders (all non-cancelled orders consume stock)
+            const cancelledStatuses=[S.ANNULE,S.ECHEC,S.ABANDONNE];
+            const used=orders.filter(o=>{
+              const match=o.productId===p.id||norm(o.productName||'')===norm(p.name);
+              return match&&!cancelledStatuses.includes(o.status);
+            }).reduce((s,o)=>s+(o.quantity||1),0);
+            const remaining=Math.max(0,(p.stock||0)-used);
+            const lowStock=remaining<=5&&remaining>0;
+            const noStock=remaining===0&&(p.stock||0)>0;
+            return(
             <div key={p.id||i} style={{padding:'12px 0',borderBottom:i<config.products.length-1?'1px solid #f0f0ec':'none'}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
                 <div>
                   <div style={{fontSize:14,fontWeight:700}}>{p.name}</div>
-                  <div style={{fontSize:12,color:'var(--muted)'}}>{p.price.toLocaleString()} F</div>
+                  <div style={{fontSize:12,color:'var(--muted)'}}>{(p.price||0).toLocaleString()} F</div>
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <div style={{textAlign:'right'}}>
-                    <span style={{fontSize:11,color:'var(--muted)'}}>Stock</span>
+                    <span style={{fontSize:11,color:'var(--muted)'}}>Stock initial</span>
                     <input type="number" min="0" value={p.stock} onChange={e=>{const prods=[...config.products];prods[i]={...prods[i],stock:Number(e.target.value)||0};upd('products',prods)}}
-                      style={{width:70,padding:'6px 8px',borderRadius:8,border:'1.5px solid var(--border)',fontSize:16,fontWeight:800,textAlign:'center',fontFamily:'inherit',outline:'none',display:'block',marginTop:2}}/>
+                      style={{width:60,padding:'4px 6px',borderRadius:8,border:'1.5px solid var(--border)',fontSize:14,fontWeight:700,textAlign:'center',fontFamily:'inherit',outline:'none',display:'block',marginTop:2}}/>
                   </div>
-                  <button onClick={()=>{if(confirm(`Supprimer ${p.name} ?`))upd('products',config.products.filter((_,j)=>j!==i))}} style={{width:28,height:28,borderRadius:8,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>
+                  <div style={{textAlign:'center',minWidth:50}}>
+                    <span style={{fontSize:11,color:'var(--muted)'}}>Restant</span>
+                    <div style={{fontSize:20,fontWeight:800,color:noStock?'var(--red-vivid)':lowStock?'var(--amber-vivid)':'var(--green-vivid)',marginTop:2}}>
+                      {remaining}
+                    </div>
+                  </div>
+                  <button onClick={()=>{if(confirm('Supprimer '+p.name+' ?'))upd('products',config.products.filter((_,j)=>j!==i))}} style={{width:28,height:28,borderRadius:8,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>
                     <div style={{width:14,height:14}}><I.x/></div>
                   </button>
                 </div>
               </div>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:4}}>{used} vendu{used>1?'s':''} — {remaining} restant{remaining>1?'s':''}</div>
 
-              {/* Aliases */}
-              <div style={{marginTop:4}}>
-                <div style={{fontSize:11,color:'var(--muted)',fontWeight:600,marginBottom:4}}>Noms marketing :</div>
-                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-                  {(p.aliases||[]).map((a,ai)=>(
-                    <span key={ai} style={{display:'inline-flex',alignItems:'center',gap:3,padding:'3px 8px',borderRadius:8,background:'var(--blue-bg)',color:'var(--blue-text)',fontSize:11,fontWeight:500}}>
-                      {a}
-                      <button onClick={()=>{const prods=[...config.products];prods[i]={...prods[i],aliases:prods[i].aliases.filter((_,j)=>j!==ai)};upd('products',prods)}} style={{background:'none',color:'var(--blue-text)',padding:0,display:'flex',marginLeft:2}}>
-                        <div style={{width:10,height:10}}><I.x/></div>
-                      </button>
-                    </span>
-                  ))}
-                  {editAlias===i?(
-                    <div style={{display:'flex',gap:4,alignItems:'center'}}>
-                      <input className="input" placeholder="Nouveau nom" value={newAlias} onChange={e=>setNewAlias(e.target.value)} style={{padding:'4px 8px',fontSize:11,width:160}}/>
-                      <button onClick={()=>{
-                        if(newAlias.trim()){const prods=[...config.products];prods[i]={...prods[i],aliases:[...(prods[i].aliases||[]),newAlias.trim()]};upd('products',prods);setNewAlias('');setEditAlias(null)}
-                      }} style={{padding:'4px 8px',borderRadius:6,background:'var(--green-vivid)',color:'#fff',fontSize:10,fontWeight:700}}>OK</button>
-                      <button onClick={()=>{setEditAlias(null);setNewAlias('')}} style={{padding:'4px 8px',borderRadius:6,background:'var(--gray-bg)',color:'var(--gray-text)',fontSize:10,fontWeight:700}}>✕</button>
-                    </div>
-                  ):(
-                    <button onClick={()=>setEditAlias(i)} style={{padding:'3px 8px',borderRadius:8,background:'#f0f0ec',color:'var(--muted)',fontSize:11,fontWeight:600}}>+ alias</button>
-                  )}
-                </div>
-              </div>
+
             </div>
-          ))}
+          )})}
         </div>
       )}
 
@@ -2705,19 +2746,28 @@ function ChatPage({isMgr}){
 
 // ============== MANAGER DASHBOARD ==============
 function ManagerDashboard(){
-  const {orders,sorted,config,expenses,now,counts}=useContext(Ctx);
+  const {orders,sorted,config,expenses,now,counts,dailyStats,activity}=useContext(Ctx);
   const [tab,setTab]=useState('live');
 
   const today=new Date().toDateString();
-  const livresAuj=orders.filter(o=>o.deliveredAt?new Date(o.deliveredAt).toDateString()===today:o.status===S.LIVRE&&o.attempts.some(a=>new Date(a.ts).toDateString()===today&&a.status===S.LIVRE));
-  const confirmedAuj=orders.filter(o=>o.attempts.some(a=>new Date(a.ts).toDateString()===today&&[S.LIVRAISON,S.LIVRE].includes(a.status)));
-  const appelesAuj=orders.filter(o=>o.attempts.some(a=>new Date(a.ts).toDateString()===today));
-  const confirmesAuj=appelesAuj.filter(o=>[S.LIVRAISON,S.LIVRE].includes(o.status));
-  const tauxConfirm=appelesAuj.length>0?Math.round(confirmesAuj.length/appelesAuj.length*100):0;
-  const tauxLiv=confirmedAuj.length>0?Math.round(livresAuj.length/confirmedAuj.length*100):0;
+  const ds=dailyStats||{};
+  
+  // Real stats from Firebase dailyStats
+  const appeles=ds.appeles||0;
+  const confirmes=ds.confirmes||0;
+  const livresCount=ds.livres||0;
+  const injoCount=ds.injoignables||0;
+  const rappelCount=ds.rappeles||0;
+  const annuleCount=ds.annules||0;
+  const nouvellesCount=ds.nouvelles||0;
+  
+  const tauxConfirm=appeles>0?Math.round(confirmes/appeles*100):0;
+  const tauxLiv=confirmes>0?Math.round(livresCount/confirmes*100):0;
   const deliveryOk=tauxLiv>=80;
   const salaryRate=calcSalaryRate(tauxConfirm,tauxLiv,config.salaryGrid);
 
+  // Finances still from orders (need actual amounts)
+  const livresAuj=orders.filter(o=>o.deliveredAt?new Date(o.deliveredAt).toDateString()===today:o.status===S.LIVRE&&o.attempts.some(a=>new Date(a.ts).toDateString()===today&&a.status===S.LIVRE));
   const pCA=livresAuj.reduce((s,o)=>(o.pricePaid||o.totalPrice)*o.quantity+s,0);
   const pDelCost=livresAuj.reduce((s,o)=>o.deliveryCost+s,0);
   const pSalary=livresAuj.length*salaryRate;
@@ -2728,16 +2778,11 @@ function ManagerDashboard(){
   // Alerts
   const nonAppeles=orders.filter(o=>o.status===S.NEW||(o.timerExp&&now>o.timerExp&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status)));
   const retournements=orders.filter(o=>o.attempts.length>=2&&o.status===S.ANNULE&&o.attempts.some(a=>[S.LIVRAISON,S.LIVRE].includes(a.status)));
-  const lastAction=orders.flatMap(o=>o.attempts.map(a=>({...a,on:o.orderNumber,fn:o.fullName}))).sort((a,b)=>new Date(b.ts)-new Date(a.ts));
-  const lastActionTime=lastAction[0]?new Date(lastAction[0].ts).getTime():0;
+  
+  // Activity feed from Firebase
+  const lastActionTime=activity.length>0?new Date(activity[0].ts).getTime():0;
   const inactiveMins=lastActionTime?Math.floor((now-lastActionTime)/60000):999;
-
-  // All activity feed
-  const feed=useMemo(()=>{
-    return orders.flatMap(o=>o.attempts.map(a=>({...a,orderNumber:o.orderNumber,fullName:o.fullName,productName:o.productName,pricePaid:o.pricePaid||o.totalPrice,qty:o.quantity}))).sort((a,b)=>new Date(b.ts)-new Date(a.ts));
-  },[orders]);
-
-  const todayFeed=feed.filter(f=>new Date(f.ts).toDateString()===today);
+  const todayFeed=activity;
 
   return(
     <div className="page">
@@ -2803,17 +2848,17 @@ function ManagerDashboard(){
           <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,padding:'10px 12px'}}>
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
               <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Appelées aujourd'hui</div>
-              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2}}>{appelesAuj.length}</div>
+              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2}}>{appeles}</div>
               <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>sur {orders.length} total</div>
             </div>
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
               <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Confirmées aujourd'hui</div>
-              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--teal-vivid)'}}>{confirmesAuj.length}</div>
+              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--teal-vivid)'}}>{confirmes}</div>
               <div style={{fontSize:11,fontWeight:600,marginTop:2,color:tauxConfirm>=60?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxConfirm}% confirmation</div>
             </div>
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
               <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Livrées (global)</div>
-              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--green-vivid)'}}>{livresAuj.length}</div>
+              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--green-vivid)'}}>{livresCount}</div>
               <div style={{fontSize:11,fontWeight:600,marginTop:2,color:deliveryOk?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxLiv}% livraison {deliveryOk?'✓':'✗'}</div>
             </div>
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
@@ -2856,7 +2901,7 @@ function ManagerDashboard(){
             {todayFeed.slice(0,8).map((f,i)=>(
               <div key={i} style={{display:'flex',gap:8,padding:'6px 0',borderBottom:i<7?'1px solid #f5f5f0':'none',alignItems:'center'}}>
                 <span style={{fontSize:11,color:'var(--muted)',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap',width:42}}>{new Date(f.ts).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'})}</span>
-                <Badge status={f.status} size="sm"/>
+                <Badge status={f.toStatus} size="sm"/>
                 <div style={{flex:1,overflow:'hidden'}}>
                   <span style={{fontSize:12,fontWeight:600}}>{f.orderNumber}</span>
                   <span style={{fontSize:11,color:'var(--muted)',marginLeft:4}}>{f.fullName}</span>
@@ -2873,10 +2918,10 @@ function ManagerDashboard(){
         <div style={{padding:'8px 12px'}}>
           <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
             <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Fil d'activité complet</div>
-            {feed.slice(0,30).map((f,i)=>{
+            {activity.slice(0,30).map((f,i)=>{
               const isToday=new Date(f.ts).toDateString()===today;
-              const prevIsToday=i>0&&new Date(feed[i-1].ts).toDateString()===today;
-              const showDateHeader=i===0||(new Date(f.ts).toDateString()!==new Date(feed[i-1].ts).toDateString());
+              const prevIsToday=i>0&&new Date(activity[i-1].ts).toDateString()===today;
+              const showDateHeader=i===0||(new Date(f.ts).toDateString()!==new Date(activity[i-1].ts).toDateString());
               return(
                 <React.Fragment key={i}>
                   {showDateHeader&&(
@@ -2889,19 +2934,19 @@ function ManagerDashboard(){
                     <div style={{flex:1}}>
                       <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:2}}>
                         <span style={{fontSize:13,fontWeight:700}}>{f.orderNumber}</span>
-                        <Badge status={f.status} size="sm"/>
+                        <Badge status={f.toStatus} size="sm"/>
                       </div>
-                      <div style={{fontSize:12,color:'#555'}}>{f.fullName} — {f.productName} ×{f.qty}</div>
+                      <div style={{fontSize:12,color:'#555'}}>{f.fullName} — {f.productName}</div>
                       {f.comment&&<div style={{fontSize:11,color:'var(--muted)',fontStyle:'italic',marginTop:2}}>💬 {f.comment}</div>}
                     </div>
-                    {[S.LIVRAISON,S.LIVRE].includes(f.status)&&(
-                      <span style={{fontSize:12,fontWeight:700,color:'var(--green-vivid)',whiteSpace:'nowrap'}}>{(f.pricePaid*f.qty).toLocaleString()}F</span>
+                    {[S.LIVRAISON,S.LIVRE].includes(f.toStatus)&&(
+                      <span style={{fontSize:12,fontWeight:700,color:'var(--green-vivid)',whiteSpace:'nowrap'}}>{(f.productName||'').toString()}F</span>
                     )}
                   </div>
                 </React.Fragment>
               );
             })}
-            {feed.length===0&&<div style={{padding:20,textAlign:'center',color:'var(--muted)',fontSize:13}}>Aucune activité</div>}
+            {activity.length===0&&<div style={{padding:20,textAlign:'center',color:'var(--muted)',fontSize:13}}>Aucune activité</div>}
           </div>
         </div>
       )}
@@ -2929,7 +2974,7 @@ function ManagerDashboard(){
             {[
               {l:"CA total",v:pCA,c:'var(--green-vivid)',sign:'+'},
               {l:"Coûts livraison",v:pDelCost,c:'var(--red-vivid)',sign:'-'},
-              {l:`Salaire (${salaryRate.toLocaleString()}F × ${livresAuj.length})`,v:pSalary,c:'var(--red-vivid)',sign:'-'},
+              {l:`Salaire (${salaryRate.toLocaleString()}F × ${livresCount})`,v:pSalary,c:'var(--red-vivid)',sign:'-'},
               {l:"Dépenses",v:pExpTotal,c:'var(--red-vivid)',sign:'-'},
             ].map((r,i)=>(
               <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid #f5f5f0',fontSize:13}}>
@@ -2963,8 +3008,7 @@ function ManagerDashboard(){
             <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Stock</div>
             {config.products.map((p,i)=>{
               const delivered=orders.filter(o=>o.status===S.LIVRE).filter(o=>{
-                const aliases=[p.name,...(p.aliases||[])];
-                return aliases.some(a=>o.productName&&o.productName.toLowerCase().includes(a.toLowerCase()));
+                return o.productId===p.id||norm(o.productName||'')===norm(p.name);
               }).reduce((s,o)=>s+o.quantity,0);
               const remaining=p.stock-delivered;
               const color=remaining<=5?'var(--red-vivid)':remaining<=15?'var(--amber-vivid)':'var(--green-vivid)';

@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.40';
+var APP_VERSION='v3.41';
 localStorage.setItem('cp_appVersion',APP_VERSION);
 </script>
 <meta name="theme-color" content="#111111">
@@ -340,10 +340,9 @@ function Provider({children,spaceCode,isMgr}){
       else setDailyStats({});
     },()=>{}));
 
-    // Activity listener (recent, limit 100)
-    unsubs.push(activityRef(spaceCode).orderBy('ts','desc').limit(100).onSnapshot(snap=>{
-      const today=todayKey();
-      setActivity(snap.docs.map(d=>({id:d.id,...d.data()})).filter(a=>a.date===today));
+    // Activity listener (last 500 for period analysis)
+    unsubs.push(activityRef(spaceCode).orderBy('ts','desc').limit(500).onSnapshot(snap=>{
+      setActivity(snap.docs.map(d=>({id:d.id,...d.data()})));
     },()=>{}));
 
     // Config listener — Firebase is source of truth
@@ -2751,6 +2750,7 @@ function ChatPage({isMgr}){
 function ManagerDashboard(){
   const {orders,sorted,config,expenses,now,counts,dailyStats,activity}=useContext(Ctx);
   const [tab,setTab]=useState('live');
+  const [dashPeriod,setDashPeriod]=useState('today');
 
   const today=new Date().toDateString();
   const ds=dailyStats||{};
@@ -2791,7 +2791,7 @@ function ManagerDashboard(){
   // Activity feed from Firebase
   const lastActionTime=activity.length>0?new Date(activity[0].ts).getTime():0;
   const inactiveMins=lastActionTime?Math.floor((now-lastActionTime)/60000):999;
-  const todayFeed=activity;
+  const todayFeed=activity.filter(a=>a.date===todayKey());
 
   return(
     <div className="page">
@@ -2853,76 +2853,79 @@ function ManagerDashboard(){
       {/* ===== TAB: LIVE ===== */}
       {tab==='live'&&(
         <>
-          {/* Status counts — real-time */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,padding:'10px 12px'}}>
-            {[
-              {label:'Nouvelles',val:nouvelles,color:'var(--blue-vivid)'},
-              {label:'Injoignables',val:injoignables,color:'var(--red-vivid)'},
-              {label:'Rappelés',val:rappeles,color:'var(--pink-vivid)'},
-              {label:'Reportés',val:reportes,color:'var(--amber-vivid)'},
-              {label:'En livraison',val:enLivraison,color:'var(--teal-vivid)'},
-              {label:'Livrés',val:livres,color:'var(--green-vivid)'},
-              {label:'Annulés',val:annules,color:'var(--muted)'},
-              {label:'Total',val:total,color:'var(--text)'},
-              {label:'Appels (jour)',val:todayAppeles,color:'var(--text)'},
-            ].map(({label,val,color})=>(
-              <div key={label} style={{background:'#fff',borderRadius:12,padding:'10px 12px',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-                <div style={{fontSize:10,color:'var(--muted)',fontWeight:500}}>{label}</div>
-                <div style={{fontSize:24,fontWeight:800,letterSpacing:-1,marginTop:2,color}}>{val}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Rates */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,padding:'0 12px 10px'}}>
-            <div style={{background:'#fff',borderRadius:12,padding:'10px 12px',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-              <div style={{fontSize:10,color:'var(--muted)'}}>Taux confirmation</div>
-              <div style={{fontSize:20,fontWeight:800,color:tauxConfirm>=60?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxConfirm}%</div>
-              <div style={{fontSize:10,color:'var(--muted)'}}>{todayConfirmes}/{todayAppeles} aujourd'hui</div>
+          {/* KPI Cards */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,padding:'10px 12px'}}>
+            <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Appelées aujourd'hui</div>
+              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2}}>{todayAppeles}</div>
+              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>sur {orders.length} total</div>
             </div>
-            <div style={{background:'#fff',borderRadius:12,padding:'10px 12px',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-              <div style={{fontSize:10,color:'var(--muted)'}}>Taux livraison</div>
-              <div style={{fontSize:20,fontWeight:800,color:deliveryOk?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxLiv}%</div>
-              <div style={{fontSize:10,color:'var(--muted)'}}>{todayLivres}/{todayConfirmes} aujourd'hui</div>
+            <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Confirmées aujourd'hui</div>
+              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--teal-vivid)'}}>{todayConfirmes}</div>
+              <div style={{fontSize:11,fontWeight:600,marginTop:2,color:tauxConfirm>=60?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxConfirm}% confirmation</div>
+            </div>
+            <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Livrées aujourd'hui</div>
+              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--green-vivid)'}}>{todayLivres}</div>
+              <div style={{fontSize:11,fontWeight:600,marginTop:2,color:deliveryOk?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxLiv}% livraison {deliveryOk?'✓':'✗'}</div>
+            </div>
+            <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Dernière activité</div>
+              <div style={{fontSize:16,fontWeight:800,letterSpacing:-0.5,marginTop:2,color:inactiveMins>=30?'var(--red-vivid)':inactiveMins>=15?'var(--amber-vivid)':'var(--green-vivid)'}}>{lastActionTime?new Date(lastActionTime).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'}):'—'}</div>
+              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{inactiveMins<999?'il y a '+inactiveMins+' min':'Aucune action'}</div>
             </div>
           </div>
 
-          {/* Last activity */}
-          <div style={{padding:'0 12px 10px'}}>
-            <div style={{background:'#fff',borderRadius:12,padding:'10px 12px',boxShadow:'0 1px 2px rgba(0,0,0,0.04)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <div>
-                <div style={{fontSize:10,color:'var(--muted)'}}>Dernière activité</div>
-                <div style={{fontSize:14,fontWeight:700,color:inactiveMins>=30?'var(--red-vivid)':inactiveMins>=15?'var(--amber-vivid)':'var(--green-vivid)'}}>{lastActionTime?new Date(lastActionTime).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'}):'—'}</div>
-              </div>
-              <div style={{fontSize:11,color:'var(--muted)'}}>{inactiveMins<999?inactiveMins+'min':'—'}</div>
-            </div>
-          </div>
-
-          {/* Status distribution */}
+          {/* Status distribution with period selector */}
           <div style={{margin:'0 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-            <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Répartition des commandes</div>
-            {[
-              {s:S.NEW,l:'Nouvelles',c:'var(--blue-vivid)'},
-              {s:S.LIVRAISON,l:'En livraison',c:'var(--teal-vivid)'},
-              {s:S.INJOIGNABLE,l:'Injoignables',c:'var(--red-vivid)'},
-              {s:S.RAPPELE,l:'Rappelés',c:'var(--pink-vivid)'},
-              {s:S.REPORTE,l:'Reportées',c:'var(--amber-vivid)'},
-              {s:S.LIVRE,l:'Livrées',c:'var(--green-vivid)'},
-              {s:S.ANNULE,l:'Annulées',c:'var(--gray-vivid)'},
-            ].map((r,i)=>{
-              const n=counts[r.s]||0;
-              const pct=orders.length>0?n/orders.length*100:0;
-              return(
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+              <div style={{fontSize:14,fontWeight:700}}>Répartition</div>
+              <select value={dashPeriod} onChange={e=>setDashPeriod(e.target.value)} style={{padding:'4px 8px',borderRadius:8,border:'1.5px solid var(--border)',fontSize:11,fontWeight:600,background:'#fff'}}>
+                <option value="today">Aujourd'hui</option>
+                <option value="yesterday">Hier</option>
+                <option value="7d">7 jours</option>
+                <option value="30d">30 jours</option>
+                <option value="all">Tout</option>
+              </select>
+            </div>
+            {(()=>{
+              // Filter activity by period
+              const now2=new Date();
+              const startOfDay=new Date(now2);startOfDay.setHours(0,0,0,0);
+              let pStart,pEnd=now2;
+              if(dashPeriod==='today')pStart=startOfDay;
+              else if(dashPeriod==='yesterday'){pStart=new Date(startOfDay);pStart.setDate(pStart.getDate()-1);pEnd=new Date(startOfDay)}
+              else if(dashPeriod==='7d'){pStart=new Date(startOfDay);pStart.setDate(pStart.getDate()-6)}
+              else if(dashPeriod==='30d'){pStart=new Date(startOfDay);pStart.setDate(pStart.getDate()-29)}
+              else{pStart=new Date(0)}
+              
+              // Count from activity log
+              const pActivity=activity.filter(a=>{const d=new Date(a.ts);return d>=pStart&&d<=pEnd});
+              // For "all" period, use current order counts
+              const useOrders=dashPeriod==='all';
+              
+              const items=[
+                {s:S.NEW,l:'Nouvelles',c:'var(--blue-vivid)',n:useOrders?(counts[S.NEW]||0):pActivity.filter(a=>a.toStatus===S.NEW).length},
+                {s:S.LIVRAISON,l:'Confirmées',c:'var(--teal-vivid)',n:useOrders?(counts[S.LIVRAISON]||0):pActivity.filter(a=>a.toStatus===S.LIVRAISON).length},
+                {s:S.INJOIGNABLE,l:'Injoignables',c:'var(--red-vivid)',n:useOrders?(counts[S.INJOIGNABLE]||0):pActivity.filter(a=>a.toStatus===S.INJOIGNABLE).length},
+                {s:S.RAPPELE,l:'Rappelés',c:'var(--pink-vivid)',n:useOrders?(counts[S.RAPPELE]||0):pActivity.filter(a=>a.toStatus===S.RAPPELE).length},
+                {s:S.REPORTE,l:'Reportées',c:'var(--amber-vivid)',n:useOrders?(counts[S.REPORTE]||0):pActivity.filter(a=>a.toStatus===S.REPORTE).length},
+                {s:S.LIVRE,l:'Livrées',c:'var(--green-vivid)',n:useOrders?(counts[S.LIVRE]||0):pActivity.filter(a=>a.toStatus===S.LIVRE).length},
+                {s:S.ANNULE,l:'Annulées',c:'var(--gray-vivid)',n:useOrders?(counts[S.ANNULE]||0):pActivity.filter(a=>a.toStatus===S.ANNULE).length},
+              ];
+              const totalP=items.reduce((s,r)=>s+r.n,0)||1;
+              return items.map((r,i)=>(
                 <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0'}}>
                   <div style={{width:8,height:8,borderRadius:4,background:r.c,flexShrink:0}}/>
                   <span style={{fontSize:12,flex:1}}>{r.l}</span>
-                  <span style={{fontSize:13,fontWeight:700,minWidth:20,textAlign:'right'}}>{n}</span>
+                  <span style={{fontSize:13,fontWeight:700,minWidth:20,textAlign:'right'}}>{r.n}</span>
                   <div style={{width:60,height:5,background:'#f0f0ec',borderRadius:3,overflow:'hidden'}}>
-                    <div style={{width:`${pct}%`,height:'100%',background:r.c,borderRadius:3}}/>
+                    <div style={{width:`${r.n/totalP*100}%`,height:'100%',background:r.c,borderRadius:3}}/>
                   </div>
                 </div>
-              );
-            })}
+              ));
+            })()}
           </div>
 
           {/* Last 5 actions */}

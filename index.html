@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.34';
+var APP_VERSION='v3.35';
 localStorage.setItem('cp_appVersion',APP_VERSION);
 </script>
 <meta name="theme-color" content="#111111">
@@ -411,69 +411,71 @@ function Provider({children,spaceCode,isMgr}){
   // Rule: orderNumber is the unique key linking Sheet rows to app orders
   // Sheet controls: name, phone, whatsapp, product, price, qty, city  
   // App controls: status (if worked on), timer, attempts, comments, delivery
-  const syncFromSheet=useCallback((sheetRows,replace)=>{
+  // syncFromSheet: ONLY detect NEW orders and add them to Firebase
+  // Firebase is THE database. Sheet is just a source for new orders.
+  const syncFromSheet=useCallback((sheetRows)=>{
     setOrders(prev=>{
-      if(replace){
-        // Full replace: just use sheet data
-        const result=sheetRows.map(normalizeOrder);
-        result.forEach(o=>{if(db)ordersRef(spaceCode).doc(o.id).set(o).catch(()=>{})});
-        return result;
-      }
-
-      // MERGE mode — explicit, deterministic, no magic
-      // Step 1: Index existing app orders by normalized orderNumber
-      const appIndex={};
+      // Build index of existing orders by normalized orderNumber
+      const existingKeys=new Set();
       prev.forEach(o=>{
-        const key=(o.orderNumber||'').replace('#','').trim();
-        if(key)appIndex[key]=o;
+        const key=(o.orderNumber||'').replace('#','').trim().toLowerCase();
+        if(key)existingKeys.add(key);
+      });
+      // Also index by phone+product for orders without order numbers
+      const existingFingerprints=new Set();
+      prev.forEach(o=>{
+        const fp=(o.phone||'').replace(/\s/g,'')+'|'+norm(o.productName||'');
+        if(fp!=='|')existingFingerprints.add(fp);
       });
 
-      // Step 2: Process each sheet row
-      const processedKeys=new Set();
-      const result=[];
-      
-      sheetRows.forEach(sheetOrder=>{
-        const key=(sheetOrder.orderNumber||'').replace('#','').trim();
-        if(!key||processedKeys.has(key))return;
-        processedKeys.add(key);
+      // Detect new orders only
+      let added=0;
+      const newOrders=[];
+      sheetRows.forEach(row=>{
+        const key=(row.orderNumber||'').replace('#','').trim().toLowerCase();
+        const fp=(row.phone||'').replace(/\s/g,'')+'|'+norm(row.productName||'');
         
-        const appOrder=appIndex[key];
-        if(appOrder){
-          // EXISTS in app → update basic fields, preserve app work
-          const updated={...appOrder,
-            fullName:sheetOrder.fullName||appOrder.fullName,
-            phone:sheetOrder.phone||appOrder.phone,
-            whatsapp:sheetOrder.whatsapp||appOrder.whatsapp,
-            productName:sheetOrder.productName||appOrder.productName,
-            totalPrice:sheetOrder.totalPrice||appOrder.totalPrice,
-            quantity:sheetOrder.quantity||appOrder.quantity,
-            city:sheetOrder.city||appOrder.city,
-          };
-          // Status: sheet wins ONLY if app is still "Nouvelle"
-          if(appOrder.status===S.NEW&&sheetOrder.status&&sheetOrder.status!==S.NEW){
-            updated.status=sheetOrder.status;
-            updated.attempts=sheetOrder.attempts||appOrder.attempts;
-            updated.timerExp=sheetOrder.timerExp||appOrder.timerExp;
-            updated.comment=sheetOrder.comment||appOrder.comment;
-          }
-          result.push(normalizeOrder(updated));
-        }else{
-          // NEW from sheet → add
-          const newOrder=normalizeOrder(sheetOrder);
-          if(db)ordersRef(spaceCode).doc(newOrder.id).set(newOrder).catch(()=>{});
-          result.push(newOrder);
-        }
+        // Skip if already exists (by order number OR by phone+product)
+        if(key&&existingKeys.has(key))return;
+        if(!key&&fp!=='|'&&existingFingerprints.has(fp))return;
+        
+        // New order — create with app-generated ID
+        const id=gid();
+        const order={
+          id,
+          shopifyNumber:row.orderNumber||'',
+          orderNumber:row.orderNumber||'',
+          fullName:row.fullName||'',
+          phone:row.phone||'',
+          whatsapp:row.whatsapp||row.phone||'',
+          productName:row.productName||'',
+          productId:'',
+          totalPrice:row.totalPrice||0,
+          quantity:row.quantity||1,
+          city:row.city||'',
+          status:S.NEW,
+          attempts:[],
+          timerExp:null,
+          reportDate:null,
+          comment:row.comment||'',
+          pricePaid:null,
+          deliveryZone:'',
+          deliveryCost:0,
+          source:'sheet',
+          createdAt:new Date().toISOString(),
+          updatedAt:new Date().toISOString(),
+        };
+        // Write to Firebase immediately
+        if(db)ordersRef(spaceCode).doc(id).set(order).catch(()=>{});
+        newOrders.push(order);
+        existingKeys.add(key);
+        existingFingerprints.add(fp);
+        added++;
       });
 
-      // Step 3: Keep app-only orders (not in sheet)
-      prev.forEach(o=>{
-        const key=(o.orderNumber||'').replace('#','').trim();
-        if(key&&!processedKeys.has(key))result.push(o);
-      });
-
-      return result;
+      if(added>0)return[...newOrders,...prev];
+      return prev;
     });
-    return sheetRows.length;
   },[spaceCode]);
 
   const addExpense=useCallback((e)=>{
@@ -848,7 +850,19 @@ function OrderDetail({order,onClose}){
         {/* Info card */}
         <div style={{background:'#F9F9F6',borderRadius:14,padding:14,marginBottom:16}}>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,fontSize:13}}>
-            <div><span style={{color:'var(--muted)',fontSize:11}}>Produit</span><div style={{fontWeight:600}}>{order.productName}</div></div>
+            <div><span style={{color:'var(--muted)',fontSize:11}}>Produit</span>
+              {(config.products||[]).length>0?(
+                <select className="select" value={order.productId||''} onChange={e=>{
+                  const p=(config.products||[]).find(p=>p.id===e.target.value);
+                  if(p)updateOrder(order.id,{productId:p.id,productName:p.name,totalPrice:p.price||order.totalPrice});
+                }} style={{fontSize:13,fontWeight:600,padding:4,marginTop:2}}>
+                  <option value="">{order.productName||'— Choisir —'}</option>
+                  {(config.products||[]).map(p=><option key={p.id} value={p.id}>{p.name} — {(p.price||0).toLocaleString()}F</option>)}
+                </select>
+              ):(
+                <div style={{fontWeight:600}}>{order.productName}</div>
+              )}
+            </div>
             <div style={{textAlign:'right'}}><span style={{color:'var(--muted)',fontSize:11}}>Quantité</span><div style={{fontWeight:600}}>{order.quantity}</div></div>
             <div><span style={{color:'var(--muted)',fontSize:11}}>Prix catalogue</span><div style={{fontWeight:600}}>{order.totalPrice.toLocaleString()} F</div></div>
             <div style={{textAlign:'right'}}><span style={{color:'var(--muted)',fontSize:11}}>Localisation</span><div style={{fontWeight:600}}>{order.address}</div></div>
@@ -1763,7 +1777,6 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
   };
 
   const doImport=()=>{
-    if(mode==='reset')clearAllOrders();
     const existingMap={};
     if(mode==='add')orders.forEach(o=>{existingMap[o.orderNumber]=true;existingMap[o.orderNumber.replace('#','')]=true});
     let imp=0,skip=0;
@@ -1781,7 +1794,7 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       const order=importOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:row[mapping.productName]||sheetLabel||'',totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||'',status:st,comment:comment,actionDate:actionDate},rows.length-idx);
       newOrders.push(order);existingMap[orderNum]=true;imp++;
     });
-    syncFromSheet(newOrders.reverse(),mode==='reset');
+    syncFromSheet(newOrders.reverse());
     setImported(imp);setSkipped(skip);
     // Save mapping AND make sure URL is in sheetUrls
     setConfig(prev=>{
@@ -1821,9 +1834,9 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
           <div style={{fontSize:12,color:'var(--teal-vivid)',fontWeight:600,marginBottom:8}}>Onglet : {selTab} — {rows.length} lignes</div>
           <div style={{display:'flex',gap:6,marginBottom:10}}>
             <button onClick={()=>setMode('add')} style={{flex:1,padding:10,borderRadius:10,fontWeight:600,fontSize:13,background:mode==='add'?'var(--dark)':'#f0f0f0',color:mode==='add'?'#fff':'var(--text)'}}>Ajouter les nouvelles</button>
-            <button onClick={()=>setMode('reset')} style={{flex:1,padding:10,borderRadius:10,fontWeight:600,fontSize:13,background:mode==='reset'?'var(--red-vivid)':'#f0f0f0',color:mode==='reset'?'#fff':'var(--text)'}}>Tout remplacer</button>
+
           </div>
-          {mode==='reset'&&<div style={{padding:'6px 10px',borderRadius:8,background:'var(--red-bg)',fontSize:12,color:'var(--red-text)',marginBottom:8}}>Toutes les commandes seront supprimees.</div>}
+
           {fields.map(f=>(<div key={f.key} style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
             <span style={{fontSize:11,fontWeight:600,minWidth:80,color:['statut','date','commentaire'].includes(f.key)?'var(--teal-vivid)':'var(--text)'}}>{f.label}</span>
             <select value={mapping[f.key]||''} onChange={e=>setMapping(prev=>({...prev,[f.key]:e.target.value}))} style={{flex:1,padding:'5px 6px',borderRadius:8,border:'1.5px solid var(--border)',fontSize:11,fontFamily:'inherit',background:'#fff'}}>
@@ -1836,8 +1849,8 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
               {mapping.orderNumber&&<b>{r[mapping.orderNumber]}</b>}{mapping.fullName&&' - '+r[mapping.fullName]}{mapping.statut&&r[mapping.statut]&&<span style={{color:'var(--teal-vivid)',fontWeight:600}}>{' ['+r[mapping.statut]+']'}</span>}{mapping.commentaire&&r[mapping.commentaire]&&<span style={{color:'var(--muted)',fontStyle:'italic'}}>{' "'+r[mapping.commentaire].slice(0,25)+'"'}</span>}
             </div>))}
           </div>
-          <button onClick={doImport} disabled={!mapping.orderNumber} style={{width:'100%',padding:14,borderRadius:12,background:mapping.orderNumber?(mode==='reset'?'var(--red-vivid)':'var(--dark)'):'#ddd',color:mapping.orderNumber?'#fff':'#999',fontWeight:700,fontSize:15}}>
-            {mode==='reset'?'Remplacer par '+rows.length+' commandes':'Importer les nouvelles'}
+          <button onClick={doImport} disabled={!mapping.orderNumber} style={{width:'100%',padding:14,borderRadius:12,background:mapping.orderNumber?'var(--dark)':'#ddd',color:mapping.orderNumber?'#fff':'#999',fontWeight:700,fontSize:15}}>
+            {'Importer les nouvelles commandes'}
           </button>
         </>)}
 
@@ -1895,7 +1908,7 @@ function useAutoSync(){
           }).filter(Boolean);
 
           // syncFromSheet handles: update existing + add new + dedup
-          syncFromSheet(sheetOrders.reverse(),false);
+          syncFromSheet(sheetOrders);
         }
         window.__syncStatus.lastSync=Date.now();
       }catch(e){}

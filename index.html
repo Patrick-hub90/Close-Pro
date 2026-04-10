@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.38';
+var APP_VERSION='v3.40';
 localStorage.setItem('cp_appVersion',APP_VERSION);
 </script>
 <meta name="theme-color" content="#111111">
@@ -903,18 +903,21 @@ function OrderDetail({order,onClose}){
                   if(p)updateOrder(order.id,{productId:p.id,productName:p.name,totalPrice:p.price||order.totalPrice});
                 }} style={{fontSize:13,fontWeight:600,padding:4,marginTop:2}}>
                   <option value="">{order.productName||'— Choisir —'}</option>
-                  {(config.products||[]).map(p=>{
-                    const cancelledSt=[S.ANNULE,S.ECHEC,S.ABANDONNE];
-                    const used=orders.filter(o=>{const mt=o.productId===p.id||norm(o.productName||'')===norm(p.name);return mt&&!cancelledSt.includes(o.status)}).reduce((s,o)=>s+(o.quantity||1),0);
-                    const rest=Math.max(0,(p.stock||0)-used);
-                    return <option key={p.id} value={p.id}>{p.name} — {(p.price||0).toLocaleString()}F ({rest} en stock)</option>
-                  })}
+                  {(config.products||[]).map(p=>
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  )}
                 </select>
               ):(
                 <div style={{fontWeight:600}}>{order.productName}</div>
               )}
             </div>
-            <div style={{textAlign:'right'}}><span style={{color:'var(--muted)',fontSize:11}}>Quantité</span><div style={{fontWeight:600}}>{order.quantity}</div></div>
+            <div style={{textAlign:'right'}}><span style={{color:'var(--muted)',fontSize:11}}>Quantité</span>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:6,marginTop:2}}>
+                <button onClick={()=>{if(order.quantity>1)updateOrder(order.id,{quantity:order.quantity-1})}} style={{width:28,height:28,borderRadius:8,background:'#f0f0f0',fontSize:16,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>−</button>
+                <span style={{fontSize:18,fontWeight:800,minWidth:24,textAlign:'center'}}>{order.quantity}</span>
+                <button onClick={()=>updateOrder(order.id,{quantity:order.quantity+1})} style={{width:28,height:28,borderRadius:8,background:'#f0f0f0',fontSize:16,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
+              </div>
+            </div>
             <div><span style={{color:'var(--muted)',fontSize:11}}>Prix catalogue</span><div style={{fontWeight:600}}>{order.totalPrice.toLocaleString()} F</div></div>
             <div style={{textAlign:'right'}}><span style={{color:'var(--muted)',fontSize:11}}>Localisation</span><div style={{fontWeight:600}}>{order.address}</div></div>
           </div>
@@ -1355,7 +1358,7 @@ function OrdersPage({isMgr}){
               <input className="input" placeholder="N° commande (optionnel)" value={newOrd.orderNumber} onChange={e=>setNewOrd({...newOrd,orderNumber:e.target.value})}/>
               <select className="select" value={newOrd.productId} onChange={e=>setNewOrd({...newOrd,productId:e.target.value})}>
                 <option value="">— Produit —</option>
-                {config.products.map(p=><option key={p.id} value={p.id}>{p.name} — {p.price.toLocaleString()}F</option>)}
+                {config.products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
               <div style={{display:'flex',gap:8}}>
                 <input className="input" type="number" min="1" placeholder="Qté" value={newOrd.quantity} onChange={e=>setNewOrd({...newOrd,quantity:Number(e.target.value)})} style={{flex:1}}/>
@@ -2752,21 +2755,27 @@ function ManagerDashboard(){
   const today=new Date().toDateString();
   const ds=dailyStats||{};
   
-  // Real stats from Firebase dailyStats
-  const appeles=ds.appeles||0;
-  const confirmes=ds.confirmes||0;
-  const livresCount=ds.livres||0;
-  const injoCount=ds.injoignables||0;
-  const rappelCount=ds.rappeles||0;
-  const annuleCount=ds.annules||0;
-  const nouvellesCount=ds.nouvelles||0;
+  // Real-time counts from current orders
+  const nouvelles=counts[S.NEW]||0;
+  const enLivraison=counts[S.LIVRAISON]||0;
+  const livres=counts[S.LIVRE]||0;
+  const injoignables=counts[S.INJOIGNABLE]||0;
+  const rappeles=counts[S.RAPPELE]||0;
+  const reportes=counts[S.REPORTE]||0;
+  const annules=counts[S.ANNULE]||0;
+  const total=counts.all||0;
   
-  const tauxConfirm=appeles>0?Math.round(confirmes/appeles*100):0;
-  const tauxLiv=confirmes>0?Math.round(livresCount/confirmes*100):0;
+  // Today's activity from Firebase counters
+  const todayAppeles=ds.appeles||0;
+  const todayConfirmes=ds.confirmes||0;
+  const todayLivres=ds.livres||0;
+
+  const tauxConfirm=todayAppeles>0?Math.round(todayConfirmes/todayAppeles*100):0;
+  const tauxLiv=todayConfirmes>0?Math.round(todayLivres/todayConfirmes*100):0;
   const deliveryOk=tauxLiv>=80;
   const salaryRate=calcSalaryRate(tauxConfirm,tauxLiv,config.salaryGrid);
 
-  // Finances still from orders (need actual amounts)
+  // Finances from actual delivered orders today
   const livresAuj=orders.filter(o=>o.deliveredAt?new Date(o.deliveredAt).toDateString()===today:o.status===S.LIVRE&&o.attempts.some(a=>new Date(a.ts).toDateString()===today&&a.status===S.LIVRE));
   const pCA=livresAuj.reduce((s,o)=>(o.pricePaid||o.totalPrice)*o.quantity+s,0);
   const pDelCost=livresAuj.reduce((s,o)=>o.deliveryCost+s,0);
@@ -2844,27 +2853,48 @@ function ManagerDashboard(){
       {/* ===== TAB: LIVE ===== */}
       {tab==='live'&&(
         <>
-          {/* KPI Cards */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,padding:'10px 12px'}}>
-            <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Appelées aujourd'hui</div>
-              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2}}>{appeles}</div>
-              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>sur {orders.length} total</div>
+          {/* Status counts — real-time */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,padding:'10px 12px'}}>
+            {[
+              {label:'Nouvelles',val:nouvelles,color:'var(--blue-vivid)'},
+              {label:'Injoignables',val:injoignables,color:'var(--red-vivid)'},
+              {label:'Rappelés',val:rappeles,color:'var(--pink-vivid)'},
+              {label:'Reportés',val:reportes,color:'var(--amber-vivid)'},
+              {label:'En livraison',val:enLivraison,color:'var(--teal-vivid)'},
+              {label:'Livrés',val:livres,color:'var(--green-vivid)'},
+              {label:'Annulés',val:annules,color:'var(--muted)'},
+              {label:'Total',val:total,color:'var(--text)'},
+              {label:'Appels (jour)',val:todayAppeles,color:'var(--text)'},
+            ].map(({label,val,color})=>(
+              <div key={label} style={{background:'#fff',borderRadius:12,padding:'10px 12px',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+                <div style={{fontSize:10,color:'var(--muted)',fontWeight:500}}>{label}</div>
+                <div style={{fontSize:24,fontWeight:800,letterSpacing:-1,marginTop:2,color}}>{val}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Rates */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,padding:'0 12px 10px'}}>
+            <div style={{background:'#fff',borderRadius:12,padding:'10px 12px',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+              <div style={{fontSize:10,color:'var(--muted)'}}>Taux confirmation</div>
+              <div style={{fontSize:20,fontWeight:800,color:tauxConfirm>=60?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxConfirm}%</div>
+              <div style={{fontSize:10,color:'var(--muted)'}}>{todayConfirmes}/{todayAppeles} aujourd'hui</div>
             </div>
-            <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Confirmées aujourd'hui</div>
-              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--teal-vivid)'}}>{confirmes}</div>
-              <div style={{fontSize:11,fontWeight:600,marginTop:2,color:tauxConfirm>=60?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxConfirm}% confirmation</div>
+            <div style={{background:'#fff',borderRadius:12,padding:'10px 12px',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+              <div style={{fontSize:10,color:'var(--muted)'}}>Taux livraison</div>
+              <div style={{fontSize:20,fontWeight:800,color:deliveryOk?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxLiv}%</div>
+              <div style={{fontSize:10,color:'var(--muted)'}}>{todayLivres}/{todayConfirmes} aujourd'hui</div>
             </div>
-            <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Livrées (global)</div>
-              <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2,color:'var(--green-vivid)'}}>{livresCount}</div>
-              <div style={{fontSize:11,fontWeight:600,marginTop:2,color:deliveryOk?'var(--green-vivid)':'var(--red-vivid)'}}>{tauxLiv}% livraison {deliveryOk?'✓':'✗'}</div>
-            </div>
-            <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-              <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Dernière activité</div>
-              <div style={{fontSize:16,fontWeight:800,letterSpacing:-0.5,marginTop:2,color:inactiveMins>=30?'var(--red-vivid)':inactiveMins>=15?'var(--amber-vivid)':'var(--green-vivid)'}}>{lastActionTime?new Date(lastActionTime).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'}):'—'}</div>
-              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{lastActionTime?new Date(lastActionTime).toLocaleDateString('fr',{day:'numeric',month:'short'}):'Aucune action'}</div>
+          </div>
+
+          {/* Last activity */}
+          <div style={{padding:'0 12px 10px'}}>
+            <div style={{background:'#fff',borderRadius:12,padding:'10px 12px',boxShadow:'0 1px 2px rgba(0,0,0,0.04)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <div style={{fontSize:10,color:'var(--muted)'}}>Dernière activité</div>
+                <div style={{fontSize:14,fontWeight:700,color:inactiveMins>=30?'var(--red-vivid)':inactiveMins>=15?'var(--amber-vivid)':'var(--green-vivid)'}}>{lastActionTime?new Date(lastActionTime).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'}):'—'}</div>
+              </div>
+              <div style={{fontSize:11,color:'var(--muted)'}}>{inactiveMins<999?inactiveMins+'min':'—'}</div>
             </div>
           </div>
 
@@ -2974,7 +3004,7 @@ function ManagerDashboard(){
             {[
               {l:"CA total",v:pCA,c:'var(--green-vivid)',sign:'+'},
               {l:"Coûts livraison",v:pDelCost,c:'var(--red-vivid)',sign:'-'},
-              {l:`Salaire (${salaryRate.toLocaleString()}F × ${livresCount})`,v:pSalary,c:'var(--red-vivid)',sign:'-'},
+              {l:`Salaire (${salaryRate.toLocaleString()}F × ${livresAuj.length})`,v:pSalary,c:'var(--red-vivid)',sign:'-'},
               {l:"Dépenses",v:pExpTotal,c:'var(--red-vivid)',sign:'-'},
             ].map((r,i)=>(
               <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid #f5f5f0',fontSize:13}}>

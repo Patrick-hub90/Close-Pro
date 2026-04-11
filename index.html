@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.50';
+var APP_VERSION='v3.52';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   localStorage.removeItem('cp_user');
@@ -168,8 +168,6 @@ function getStatusStyle(status,config){
 }
 
 
-const AFTER_CALL=[S.LIVRAISON,S.INJOIGNABLE,S.RAPPELE,S.REPORTE,S.ANNULE];
-const DELIVERY_FAIL=[S.ANNULE,S.REPORTE,S.INJOIGNABLE];
 
 function gs(k,fb){try{const d=localStorage.getItem('cp_'+k);return d?JSON.parse(d):fb}catch{return fb}}
 function ss(k,v){localStorage.setItem('cp_'+k,JSON.stringify(v))}
@@ -811,7 +809,6 @@ function OrderDetail({order,onClose}){
   const [timerH,setTimerH]=useState(2);
   const [timerMode,setTimerMode]=useState('hours');
   const [timerDate,setTimerDate]=useState('');
-  const [showHist,setShowHist]=useState(false);
   const [showWa,setShowWa]=useState(false);
   const [waCustom,setWaCustom]=useState('');
 
@@ -980,35 +977,14 @@ function OrderDetail({order,onClose}){
           )}
         </div>
 
-        {/* Delivery return buttons */}
-        {order.status===S.LIVRAISON&&!status&&(
-          <div style={{marginBottom:16}}>
-            <div style={{fontSize:13,fontWeight:700,marginBottom:8,color:'var(--text)'}}>Retour livraison</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-              <button onClick={()=>setStatus(S.LIVRE)} style={{padding:14,borderRadius:12,background:'var(--green-bg)',color:'var(--green-text)',fontWeight:700,fontSize:14,border:'2px solid var(--green-vivid)'}}>✓ Livré</button>
-              <button onClick={()=>setStatus(S.ECHEC)} style={{padding:14,borderRadius:12,background:'var(--red-bg)',color:'var(--red-text)',fontWeight:700,fontSize:14,border:'2px solid var(--red-vivid)'}}>✗ Échec</button>
-            </div>
-          </div>
-        )}
-        {status===S.ECHEC&&(
-          <div style={{marginBottom:16}}>
-            <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>Raison de l'échec</div>
-            <div style={{display:'flex',gap:6}}>
-              {DELIVERY_FAIL.map(ds=>{const dsc=getStatusColor(ds,config);return <button key={ds} onClick={()=>setStatus(ds)} style={{flex:1,padding:'10px 4px',borderRadius:10,fontSize:12,fontWeight:600,background:dsc+'18',color:dsc,border:`1.5px solid ${dsc}`}}>{ds}</button>})}
-            </div>
-          </div>
-        )}
-
-        {/* Status select for non-livraison */}
-        {![S.LIVRAISON,S.LIVRE,S.ANNULE,S.ABANDONNE].includes(order.status)&&(
-          <div style={{marginBottom:14}}>
-            <label style={{fontSize:13,fontWeight:700,display:'block',marginBottom:6}}>Nouveau statut</label>
-            <select className="select" value={status} onChange={e=>{setStatus(e.target.value);if(e.target.value===S.INJOIGNABLE){setTimerH(2);setTimerMode('hours')}if(e.target.value===S.RAPPELE){setTimerH(1);setTimerMode('hours')}if(e.target.value===S.REPORTE){setTimerMode('date');setTimerDate('')}}}>
-              <option value="">— Choisir après appel —</option>
-              {AFTER_CALL.map(s=><option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-        )}
+        {/* Status select — always available */}
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:13,fontWeight:700,display:'block',marginBottom:6}}>Nouveau statut</label>
+          <select className="select" value={status} onChange={e=>{setStatus(e.target.value);if(e.target.value===S.INJOIGNABLE){setTimerH(2);setTimerMode('hours')}if(e.target.value===S.RAPPELE){setTimerH(1);setTimerMode('hours')}if(e.target.value===S.REPORTE){setTimerMode('date');setTimerDate('')}}}>
+            <option value="">— Choisir —</option>
+            {[S.LIVRAISON,S.LIVRE,S.INJOIGNABLE,S.RAPPELE,S.REPORTE,S.ANNULE].map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
 
         {/* Livraison details — price/zone already above */}
 
@@ -1086,25 +1062,29 @@ function OrderDetail({order,onClose}){
         {status&&<button onClick={save} style={{width:'100%',padding:14,background:'var(--dark)',color:'#fff',borderRadius:14,fontWeight:700,fontSize:16,letterSpacing:-0.3}}>Enregistrer</button>}
 
         {/* History */}
-        <button onClick={()=>setShowHist(!showHist)} style={{width:'100%',marginTop:14,padding:10,background:'none',color:'var(--muted)',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
-          <div style={{width:16,height:16}}><I.history/></div>
-          Historique ({order.attempts.length})
-        </button>
-        {showHist&&(
-          <div style={{marginTop:6,borderLeft:'2px solid #e8e8e3',marginLeft:10,paddingLeft:14}}>
-            {order.attempts.length===0&&<p style={{fontSize:12,color:'var(--muted)'}}>Aucune action</p>}
-            {[...order.attempts].reverse().map((a,i)=>(
-              <div key={i} style={{padding:'8px 0',borderBottom:'1px solid #f5f5f0',position:'relative'}}>
-                <div style={{position:'absolute',left:-20,top:12,width:8,height:8,borderRadius:4,background:'var(--border)'}}/>
-                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:2}}>
-                  <Badge status={a.status} size="sm"/>
-                  <span style={{fontSize:11,color:'var(--muted)'}}>{new Date(a.ts).toLocaleString('fr')}</span>
-                </div>
-                {a.comment&&<p style={{fontSize:12,color:'#555'}}>{a.comment}</p>}
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Historique des modifications — always visible */}
+        <div style={{marginTop:14}}>
+          <div style={{fontSize:13,fontWeight:700,marginBottom:8,color:'var(--text)'}}>Notifications ({order.attempts.length})</div>
+          {order.attempts.length===0?(
+            <div style={{padding:'12px',background:'#f9f9f6',borderRadius:10,fontSize:12,color:'var(--muted)',textAlign:'center'}}>Aucune modification</div>
+          ):(
+            <div style={{borderLeft:'2px solid #e8e8e3',marginLeft:4,paddingLeft:14}}>
+              {[...order.attempts].reverse().map((a,i)=>{
+                const sc=getStatusColor(a.status,config);
+                return(
+                  <div key={i} style={{padding:'8px 0',borderBottom:i<order.attempts.length-1?'1px solid #f5f5f0':'none',position:'relative'}}>
+                    <div style={{position:'absolute',left:-20,top:12,width:8,height:8,borderRadius:4,background:sc}}/>
+                    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:2}}>
+                      <span style={{fontSize:12,fontWeight:700,color:sc}}>{a.status}</span>
+                      <span style={{fontSize:11,color:'var(--muted)'}}>{new Date(a.ts).toLocaleDateString('fr',{day:'2-digit',month:'short'})} à {new Date(a.ts).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'})}</span>
+                    </div>
+                    {a.comment&&<p style={{fontSize:12,color:'#555',marginTop:2}}>{a.comment}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

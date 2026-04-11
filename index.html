@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.48';
+var APP_VERSION='v3.49';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   localStorage.removeItem('cp_user');
@@ -2880,12 +2880,6 @@ function ManagerDashboard(){
       {/* ===== ALERTS ===== */}
       {nonAppeles.length>0&&(
         <div style={{padding:'8px 12px 0',display:'flex',flexDirection:'column',gap:6}}>
-          {retournements.length>0&&(
-            <div style={{padding:'10px 12px',borderRadius:12,background:'#FEE2E2',border:'1.5px solid #FECACA',display:'flex',alignItems:'center',gap:8}}>
-              <div style={{width:18,height:18,color:'var(--red-vivid)'}}><I.zap/></div>
-              <div style={{fontSize:13}}><b style={{color:'var(--red-text)'}}>{retournements.length} retournement{retournements.length>1?'s':''}</b><span style={{color:'var(--red-text)',opacity:0.8}}> — confirmée(s) puis annulée(s)</span></div>
-            </div>
-          )}
           {nonAppeles.length>0&&(
             <div style={{padding:'10px 12px',borderRadius:12,background:'var(--amber-bg)',border:'1.5px solid #FDE68A',display:'flex',alignItems:'center',gap:8}}>
               <div style={{width:18,height:18,color:'var(--amber-vivid)'}}><I.phone/></div>

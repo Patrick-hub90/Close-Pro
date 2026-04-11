@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.43';
+var APP_VERSION='v3.45';
 localStorage.setItem('cp_appVersion',APP_VERSION);
 </script>
 <meta name="theme-color" content="#111111">
@@ -145,15 +145,15 @@ function dedup(orders){
 }
 
 const STATUS_STYLE={
-  [S.NEW]:{bg:'var(--blue-bg)',color:'var(--blue-text)',dot:'var(--blue-vivid)'},
-  [S.LIVRAISON]:{bg:'var(--teal-bg)',color:'var(--teal-text)',dot:'var(--teal-vivid)'},
-  [S.INJOIGNABLE]:{bg:'var(--red-bg)',color:'var(--red-text)',dot:'var(--red-vivid)'},
-  [S.RAPPELE]:{bg:'var(--pink-bg)',color:'var(--pink-text)',dot:'var(--pink-vivid)'},
-  [S.REPORTE]:{bg:'var(--amber-bg)',color:'var(--amber-text)',dot:'var(--amber-vivid)'},
-  [S.ANNULE]:{bg:'var(--gray-bg)',color:'var(--gray-text)',dot:'var(--gray-vivid)'},
-  [S.LIVRE]:{bg:'var(--green-bg)',color:'var(--green-text)',dot:'var(--green-vivid)'},
-  [S.ECHEC]:{bg:'var(--red-bg)',color:'var(--red-text)',dot:'var(--red-vivid)'},
-  [S.ABANDONNE]:{bg:'var(--gray-bg)',color:'var(--gray-text)',dot:'var(--gray-vivid)'},
+  [S.NEW]:{bg:'#EFF6FF',color:'#1D4ED8',dot:'#3B82F6',card:'#F5F8FF',border:'#3B82F6'},
+  [S.LIVRAISON]:{bg:'#DBEAFE',color:'#1E40AF',dot:'#2563EB',card:'#EBF2FF',border:'#2563EB'},
+  [S.INJOIGNABLE]:{bg:'#FEE2E2',color:'#991B1B',dot:'#EF4444',card:'#FFF5F5',border:'#EF4444'},
+  [S.RAPPELE]:{bg:'#FCE7F3',color:'#9D174D',dot:'#EC4899',card:'#FFF0F6',border:'#EC4899'},
+  [S.REPORTE]:{bg:'#FEF3C7',color:'#92400E',dot:'#F59E0B',card:'#FFFBEB',border:'#F59E0B'},
+  [S.ANNULE]:{bg:'#F3F4F6',color:'#374151',dot:'#6B7280',card:'#F9FAFB',border:'#9CA3AF'},
+  [S.LIVRE]:{bg:'#DCFCE7',color:'#166534',dot:'#22C55E',card:'#F0FDF4',border:'#22C55E'},
+  [S.ECHEC]:{bg:'#FEE2E2',color:'#991B1B',dot:'#EF4444',card:'#FFF5F5',border:'#EF4444'},
+  [S.ABANDONNE]:{bg:'#F3F4F6',color:'#374151',dot:'#6B7280',card:'#F9FAFB',border:'#9CA3AF'},
 };
 
 const AFTER_CALL=[S.LIVRAISON,S.INJOIGNABLE,S.RAPPELE,S.REPORTE,S.ANNULE];
@@ -684,8 +684,8 @@ function Badge({status,size='md'}){
   const st=STATUS_STYLE[status]||STATUS_STYLE[S.NEW];
   const isSmall=size==='sm';
   return(
-    <span style={{display:'inline-flex',alignItems:'center',gap:5,padding:isSmall?'2px 8px':'3px 10px',borderRadius:20,fontSize:isSmall?10:11,fontWeight:600,background:st.bg,color:st.color,whiteSpace:'nowrap',letterSpacing:0.2}}>
-      <span style={{width:6,height:6,borderRadius:3,background:st.dot,flexShrink:0}}/>
+    <span style={{display:'inline-flex',alignItems:'center',gap:5,padding:isSmall?'3px 8px':'4px 12px',borderRadius:20,fontSize:isSmall?10:12,fontWeight:700,background:st.bg,color:st.color,whiteSpace:'nowrap',letterSpacing:0.3,border:`1px solid ${st.dot}22`}}>
+      <span style={{width:7,height:7,borderRadius:4,background:st.dot,flexShrink:0}}/>
       {status}
     </span>
   );
@@ -719,11 +719,14 @@ function OrderCard({order,onClick}){
   const isOverdue=order.timerExp&&now>order.timerExp;
   const hasTimer=order.timerExp&&[S.INJOIGNABLE,S.RAPPELE].includes(order.status);
 
+  const st=STATUS_STYLE[order.status]||STATUS_STYLE[S.NEW];
   return(
     <div onClick={onClick} className={isOverdue?'urgent-pulse':''} style={{
-      padding:'14px 16px',background:isOverdue?'#FEE2E2':'#fff',
+      padding:'14px 16px 14px 20px',
+      background:isOverdue?'#FEE2E2':st.card,
       borderBottom:'1px solid #EFEFEA',cursor:'pointer',
       transition:'background .15s',position:'relative',
+      borderLeft:`4px solid ${st.border}`,
     }}>
       {/* Row 1: Order number + Client name + Price */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
@@ -764,17 +767,20 @@ function OrderCard({order,onClick}){
         </div>
       )}
 
-      {/* Row 6: Location + comment/delivery date */}
+      {/* Row 6: Location */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:6}}>
         <span style={{fontSize:12,color:'var(--muted)',display:'flex',alignItems:'center',gap:3}}>
           <span style={{width:12,height:12,opacity:0.5}}><I.mapPin/></span>
           {order.address}, {order.city}
         </span>
-        {order.status===S.LIVRE&&order.deliveredAt?(
+        {order.status===S.LIVRE&&order.deliveredAt&&(
           <span style={{fontSize:11,color:'var(--green-vivid)',fontWeight:600}}>Livré le {new Date(order.deliveredAt).toLocaleDateString('fr',{day:'2-digit',month:'short'})} à {new Date(order.deliveredAt).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'})}</span>
-        ):order.comment?(
-          <span style={{fontSize:11,color:'var(--muted)',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontStyle:'italic'}}>💬 {order.comment}</span>
-        ):null}
+        )}
+      </div>
+
+      {/* Row 7: Comment — always visible */}
+      <div style={{marginTop:8,padding:'8px 10px',borderRadius:8,background:order.comment?'rgba(0,0,0,0.03)':'transparent',fontSize:12,lineHeight:1.5,color:order.comment?'#333':'#bbb',fontStyle:order.comment?'normal':'italic'}}>
+        {order.comment||'Pas de commentaire'}
       </div>
     </div>
   );

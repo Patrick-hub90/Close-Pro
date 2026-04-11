@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.49';
+var APP_VERSION='v3.50';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   localStorage.removeItem('cp_user');
@@ -741,13 +741,8 @@ function OrderCard({order,onClick}){
       background:isOverdue?'#FEE2E2':'#fff',
       borderBottom:'1px solid #EFEFEA',cursor:'pointer',
       transition:'background .15s',position:'relative',
+      padding:'14px 16px',
     }}>
-      {/* Status banner — full width, colored background, white text */}
-      <div style={{background:sc,padding:'6px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <span style={{color:'#fff',fontSize:12,fontWeight:700,letterSpacing:0.3}}>{order.status}</span>
-        {order.attempts.length>1&&<span style={{color:'rgba(255,255,255,0.8)',fontSize:10}}>×{order.attempts.length} appels</span>}
-      </div>
-      <div style={{padding:'10px 16px'}}>
       {/* Row 1: Order number + Client name + Price */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
         <div style={{display:'flex',alignItems:'baseline',gap:6}}>
@@ -768,6 +763,12 @@ function OrderCard({order,onClick}){
       <div style={{fontSize:12.5,color:order.productId?'var(--text)':'var(--muted)',marginBottom:8,display:'flex',alignItems:'center',gap:4}}>
         <span style={{width:13,height:13,opacity:0.45,flexShrink:0}}><I.pkg/></span>
         <span style={{fontWeight:order.productId?600:400}}>{order.productId?order.productName:((order.sheetProductName||order.productName)||'Non attribue')}</span>
+      </div>
+
+      {/* Row 4: Status bar — full width inside card */}
+      <div style={{background:sc,padding:'7px 12px',borderRadius:8,display:'flex',justifyContent:'space-between',alignItems:'center',margin:'0 -4px'}}>
+        <span style={{color:'#fff',fontSize:12,fontWeight:700,letterSpacing:0.3}}>{order.status}</span>
+        {order.attempts.length>1&&<span style={{color:'rgba(255,255,255,0.8)',fontSize:10}}>×{order.attempts.length} appels</span>}
       </div>
 
 
@@ -793,7 +794,6 @@ function OrderCard({order,onClick}){
       {/* Row 7: Comment — always visible */}
       <div style={{marginTop:8,padding:'8px 10px',borderRadius:8,background:order.comment?'rgba(0,0,0,0.03)':'transparent',fontSize:12,lineHeight:1.5,color:order.comment?'#333':'#bbb',fontStyle:order.comment?'normal':'italic'}}>
         {order.comment||'Pas de commentaire'}
-      </div>
       </div>
     </div>
   );

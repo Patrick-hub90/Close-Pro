@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.41';
+var APP_VERSION='v3.43';
 localStorage.setItem('cp_appVersion',APP_VERSION);
 </script>
 <meta name="theme-color" content="#111111">
@@ -488,7 +488,8 @@ function Provider({children,spaceCode,isMgr}){
           fullName:row.fullName||'',
           phone:row.phone||'',
           whatsapp:row.whatsapp||row.phone||'',
-          productName:row.productName||'',
+          productName:'',
+          sheetProductName:row.productName||'',
           productId:'',
           totalPrice:row.totalPrice||0,
           quantity:row.quantity||1,
@@ -741,9 +742,9 @@ function OrderCard({order,onClick}){
       </div>
 
       {/* Row 3: Product name */}
-      <div style={{fontSize:12.5,color:'var(--muted)',marginBottom:8,display:'flex',alignItems:'center',gap:4}}>
+      <div style={{fontSize:12.5,color:order.productId?'var(--text)':'var(--muted)',marginBottom:8,display:'flex',alignItems:'center',gap:4}}>
         <span style={{width:13,height:13,opacity:0.45,flexShrink:0}}><I.pkg/></span>
-        <span style={{fontWeight:500}}>{order.productName}</span>
+        <span style={{fontWeight:order.productId?600:400}}>{order.productId?order.productName:((order.sheetProductName||order.productName)||'Non attribue')}</span>
       </div>
 
       {/* Row 4: Status badges */}
@@ -800,7 +801,7 @@ function OrderDetail({order,onClose}){
 
   // Build WhatsApp message from template
   const fillTemplate=(tpl)=>{
-    return tpl.replace(/\{nom\}/g,order.fullName||'').replace(/\{produit\}/g,order.productName||'').replace(/\{prix\}/g,(order.pricePaid||order.totalPrice||0).toLocaleString()).replace(/\{ville\}/g,order.address||'').replace(/\{numero_commande\}/g,order.orderNumber||'');
+    return tpl.replace(/\{nom\}/g,order.fullName||'').replace(/\{produit\}/g,order.productName||order.sheetProductName||'').replace(/\{prix\}/g,(order.pricePaid||order.totalPrice||0).toLocaleString()).replace(/\{ville\}/g,order.address||'').replace(/\{numero_commande\}/g,order.orderNumber||'');
   };
   const openWa=(msg)=>{
     const encoded=encodeURIComponent(msg);
@@ -897,17 +898,23 @@ function OrderDetail({order,onClose}){
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,fontSize:13}}>
             <div><span style={{color:'var(--muted)',fontSize:11}}>Produit</span>
               {(config.products||[]).length>0?(
+                <>
                 <select className="select" value={order.productId||''} onChange={e=>{
                   const p=(config.products||[]).find(p=>p.id===e.target.value);
                   if(p)updateOrder(order.id,{productId:p.id,productName:p.name,totalPrice:p.price||order.totalPrice});
+                  else if(!e.target.value)updateOrder(order.id,{productId:'',productName:''});
                 }} style={{fontSize:13,fontWeight:600,padding:4,marginTop:2}}>
-                  <option value="">{order.productName||'— Choisir —'}</option>
+                  <option value="">— Selectionner —</option>
                   {(config.products||[]).map(p=>
                     <option key={p.id} value={p.id}>{p.name}</option>
                   )}
                 </select>
+                {!order.productId&&(order.sheetProductName||order.productName)&&(
+                  <div style={{fontSize:10,color:'var(--muted)',marginTop:3,fontStyle:'italic'}}>Sheet: {order.sheetProductName||order.productName}</div>
+                )}
+                </>
               ):(
-                <div style={{fontWeight:600}}>{order.productName}</div>
+                <div style={{fontWeight:600}}>{order.productName||'—'}</div>
               )}
             </div>
             <div style={{textAlign:'right'}}><span style={{color:'var(--muted)',fontSize:11}}>Quantité</span>
@@ -941,7 +948,7 @@ function OrderDetail({order,onClose}){
               <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Zone livraison</label>
               <select className="select" value={zone} onChange={e=>{setZone(e.target.value);const zp=e.target.value==='custom'?Number(customZP):config.zones.find(z=>z.name===e.target.value)?.price||0;updateOrder(order.id,{deliveryZone:e.target.value==='custom'?'Personnalisé':e.target.value,deliveryCost:zp})}} style={{marginTop:4}}>
                 <option value="">— Zone —</option>
-                {config.zones.map(z=><option key={z.name} value={z.name}>{z.name} — {z.price.toLocaleString()}F</option>)}
+                {config.zones.map(z=><option key={z.name} value={z.name}>{z.name}{z.desc?' — '+z.desc:''} — {(z.price||0).toLocaleString()}F</option>)}
                 <option value="custom">Personnalisé</option>
               </select>
             </div>
@@ -1956,7 +1963,7 @@ function useAutoSync(){
             const comment=m.commentaire?row[m.commentaire]||'':'';
             const now=new Date();
             const createdAt=new Date(now.getTime()-(data.rows.length-idx)*1000).toISOString();
-            return{id:('s'+Math.random().toString(36).slice(2,10)),orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',createdAt,updatedAt:createdAt,status:st,attempts:st!==S.NEW?[{status:st,ts:createdAt,comment}]:[],timerExp:null,reportDate:null,comment,pricePaid:st===S.LIVRE?Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0:null,deliveryZone:'',deliveryCost:0};
+            return{id:('s'+Math.random().toString(36).slice(2,10)),orderNumber:orderNum,fullName:row[m.fullName]||'',phone:row[m.phone]||'',whatsapp:row[m.whatsapp]||row[m.phone]||'',productName:'',sheetProductName:row[m.productName]||sh.label||'',totalPrice:Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[m.quantity])||1,city:row[m.city]||'',createdAt,updatedAt:createdAt,status:st,attempts:st!==S.NEW?[{status:st,ts:createdAt,comment}]:[],timerExp:null,reportDate:null,comment,pricePaid:st===S.LIVRE?Number(String(row[m.totalPrice]||'0').replace(/[^0-9]/g,''))||0:null,deliveryZone:'',deliveryCost:0};
           }).filter(Boolean);
 
           // syncFromSheet handles: update existing + add new + dedup
@@ -2095,6 +2102,7 @@ function ConfigPage({isManager}){
 
   // Zone form
   const [newZone,setNewZone]=useState('');
+  const [newZoneDesc,setNewZoneDesc]=useState('');
   const [newZonePrice,setNewZonePrice]=useState('');
 
   // Manager: product form
@@ -2307,24 +2315,32 @@ function ConfigPage({isManager}){
       <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
         <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Zones de livraison</div>
         {config.zones.map((z,i)=>(
-          <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid #f5f5f0'}}>
-            <span style={{fontSize:13,fontWeight:500}}>{z.name}</span>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <span style={{fontSize:14,fontWeight:700}}>{z.price.toLocaleString()} F</span>
-              <button onClick={()=>upd('zones',config.zones.filter((_,j)=>j!==i))} style={{width:24,height:24,borderRadius:6,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>
-                <div style={{width:12,height:12}}><I.x/></div>
-              </button>
+          <div key={i} style={{padding:'10px 0',borderBottom:'1px solid #f5f5f0'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:600}}>{z.name}</div>
+                {z.desc&&<div style={{fontSize:11,color:'var(--muted)',marginTop:1}}>{z.desc}</div>}
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <span style={{fontSize:14,fontWeight:700}}>{(z.price||0).toLocaleString()} F</span>
+                <button onClick={()=>upd('zones',config.zones.filter((_,j)=>j!==i))} style={{width:24,height:24,borderRadius:6,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>
+                  <div style={{width:12,height:12}}><I.x/></div>
+                </button>
+              </div>
             </div>
           </div>
         ))}
-        <div style={{display:'flex',gap:6,marginTop:10}}>
-          <input className="input" placeholder="Nom zone" value={newZone} onChange={e=>setNewZone(e.target.value)} style={{flex:2}}/>
-          <input className="input" type="number" placeholder="Prix" value={newZonePrice} onChange={e=>setNewZonePrice(e.target.value)} style={{flex:1}}/>
-          <button onClick={()=>{
-            if(newZone&&newZonePrice){upd('zones',[...config.zones,{name:newZone,price:Number(newZonePrice)}]);setNewZone('');setNewZonePrice('')}
-          }} style={{padding:'0 14px',borderRadius:10,background:'var(--dark)',color:'#fff',fontWeight:700}}>
-            <div style={{width:16,height:16}}><I.plus/></div>
-          </button>
+        <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:10}}>
+          <input className="input" placeholder="Nom de la zone" value={newZone} onChange={e=>setNewZone(e.target.value)}/>
+          <input className="input" placeholder="Description (optionnel)" value={newZoneDesc} onChange={e=>setNewZoneDesc(e.target.value)} style={{fontSize:12}}/>
+          <div style={{display:'flex',gap:6}}>
+            <input className="input" type="number" placeholder="Prix (F)" value={newZonePrice} onChange={e=>setNewZonePrice(e.target.value)} style={{flex:1}}/>
+            <button onClick={()=>{
+              if(newZone&&newZonePrice){upd('zones',[...config.zones,{name:newZone,desc:newZoneDesc.trim(),price:Number(newZonePrice)}]);setNewZone('');setNewZoneDesc('');setNewZonePrice('')}
+            }} style={{padding:'0 16px',borderRadius:10,background:'var(--dark)',color:'#fff',fontWeight:700}}>
+              <div style={{width:16,height:16}}><I.plus/></div>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2786,7 +2802,7 @@ function ManagerDashboard(){
 
   // Alerts
   const nonAppeles=orders.filter(o=>o.status===S.NEW||(o.timerExp&&now>o.timerExp&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status)));
-  const retournements=orders.filter(o=>o.attempts.length>=2&&o.status===S.ANNULE&&o.attempts.some(a=>[S.LIVRAISON,S.LIVRE].includes(a.status)));
+
   
   // Activity feed from Firebase
   const lastActionTime=activity.length>0?new Date(activity[0].ts).getTime():0;
@@ -2819,7 +2835,7 @@ function ManagerDashboard(){
       </div>
 
       {/* ===== ALERTS ===== */}
-      {(retournements.length>0||nonAppeles.length>0)&&(
+      {nonAppeles.length>0&&(
         <div style={{padding:'8px 12px 0',display:'flex',flexDirection:'column',gap:6}}>
           {retournements.length>0&&(
             <div style={{padding:'10px 12px',borderRadius:12,background:'#FEE2E2',border:'1.5px solid #FECACA',display:'flex',alignItems:'center',gap:8}}>

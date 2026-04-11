@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.46';
+var APP_VERSION='v3.47';
 localStorage.setItem('cp_appVersion',APP_VERSION);
 </script>
 <meta name="theme-color" content="#111111">
@@ -691,7 +691,8 @@ function NotifEngine({isMgr}){
 
 // ============== STATUS BADGE ==============
 function Badge({status,size='md'}){
-  const {config}=useContext(Ctx);
+  const ctx=useContext(Ctx);
+  const config=ctx?ctx.config:null;
   const c=getStatusColor(status,config);
   const isSmall=size==='sm';
   return(
@@ -734,13 +735,16 @@ function OrderCard({order,onClick}){
   const sc=getStatusColor(order.status,config);
   return(
     <div onClick={onClick} className={isOverdue?'urgent-pulse':''} style={{
-      padding:'0',background:isOverdue?'#FEE2E2':'#fff',
+      background:isOverdue?'#FEE2E2':'#fff',
       borderBottom:'1px solid #EFEFEA',cursor:'pointer',
       transition:'background .15s',position:'relative',
     }}>
-      {/* Status color bar — full width */}
-      <div style={{height:4,background:sc,width:'100%',borderRadius:'0'}}/>
-      <div style={{padding:'12px 16px'}}>
+      {/* Status banner — full width, colored background, white text */}
+      <div style={{background:sc,padding:'6px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style={{color:'#fff',fontSize:12,fontWeight:700,letterSpacing:0.3}}>{order.status}</span>
+        {order.attempts.length>1&&<span style={{color:'rgba(255,255,255,0.8)',fontSize:10}}>×{order.attempts.length} appels</span>}
+      </div>
+      <div style={{padding:'10px 16px'}}>
       {/* Row 1: Order number + Client name + Price */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
         <div style={{display:'flex',alignItems:'baseline',gap:6}}>
@@ -763,15 +767,7 @@ function OrderCard({order,onClick}){
         <span style={{fontWeight:order.productId?600:400}}>{order.productId?order.productName:((order.sheetProductName||order.productName)||'Non attribue')}</span>
       </div>
 
-      {/* Row 4: Status badges */}
-      <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-        <Badge status={order.status}/>
-        {order.attempts.length>1&&(
-          <span style={{fontSize:10,color:'var(--muted)',display:'inline-flex',alignItems:'center',gap:2}}>
-            <span style={{width:12,height:12}}><I.phone/></span>×{order.attempts.length}
-          </span>
-        )}
-      </div>
+
 
       {/* Row 5: Timer — full width, prominent */}
       {hasTimer&&(
@@ -1126,7 +1122,8 @@ function SearchBar({value,onChange}){
 
 // ============== CATEGORY TABS ==============
 function CategoryTabs({active,onChange,counts}){
-  const {config}=useContext(Ctx);
+  const ctx=useContext(Ctx);
+  const config=ctx?ctx.config:null;
   const gc=(s)=>getStatusColor(s,config);
   const tabs=[
     {key:'all',label:'Toutes',count:counts.all,color:'var(--dark)'},

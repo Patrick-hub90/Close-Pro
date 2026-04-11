@@ -10,8 +10,16 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.47';
-localStorage.setItem('cp_appVersion',APP_VERSION);
+var APP_VERSION='v3.48';
+var storedVersion=localStorage.getItem('cp_appVersion');
+if(storedVersion&&storedVersion!==APP_VERSION){
+  localStorage.removeItem('cp_user');
+  localStorage.removeItem('cp_mgrSpace');
+  localStorage.setItem('cp_appVersion',APP_VERSION);
+  window.location.reload(true);
+}else{
+  localStorage.setItem('cp_appVersion',APP_VERSION);
+}
 </script>
 <meta name="theme-color" content="#111111">
 <link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiQ2xvc2VQcm8iLCJzaG9ydF9uYW1lIjoiQ2xvc2VQcm8iLCJzdGFydF91cmwiOiIuIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiI2ZhZmFmOCIsInRoZW1lX2NvbG9yIjoiIzExMTExMSJ9">
@@ -158,8 +166,7 @@ function getStatusStyle(status,config){
   const c=getStatusColor(status,config);
   return{bg:c+'18',color:c,dot:c,border:c,card:c+'08'};
 }
-// Fallback for places that don't have config
-const STATUS_STYLE=Object.fromEntries(Object.values({NEW:'Nouvelle',LIVRAISON:'Livraison en cours',INJOIGNABLE:'Injoignable',RAPPELE:'Rappelé',REPORTE:'Reportée',ANNULE:'Annulée',LIVRE:'Livré',ECHEC:'Échec livraison',ABANDONNE:'Abandonné'}).map(s=>[s,getStatusStyle(s)]));
+
 
 const AFTER_CALL=[S.LIVRAISON,S.INJOIGNABLE,S.RAPPELE,S.REPORTE,S.ANNULE];
 const DELIVERY_FAIL=[S.ANNULE,S.REPORTE,S.INJOIGNABLE];
@@ -691,9 +698,7 @@ function NotifEngine({isMgr}){
 
 // ============== STATUS BADGE ==============
 function Badge({status,size='md'}){
-  const ctx=useContext(Ctx);
-  const config=ctx?ctx.config:null;
-  const c=getStatusColor(status,config);
+  const c=getStatusColor(status,null);
   const isSmall=size==='sm';
   return(
     <span style={{display:'inline-flex',alignItems:'center',gap:5,padding:isSmall?'3px 8px':'4px 12px',borderRadius:20,fontSize:isSmall?10:12,fontWeight:700,background:c+'18',color:c,whiteSpace:'nowrap',letterSpacing:0.3}}>
@@ -727,11 +732,9 @@ function TimerBadge({expiresAt,now}){
 
 // ============== ORDER CARD (EasySell style) ==============
 function OrderCard({order,onClick}){
-  const {now}=useContext(Ctx);
+  const {now,config}=useContext(Ctx);
   const isOverdue=order.timerExp&&now>order.timerExp;
   const hasTimer=order.timerExp&&[S.INJOIGNABLE,S.RAPPELE].includes(order.status);
-
-  const {config}=useContext(Ctx);
   const sc=getStatusColor(order.status,config);
   return(
     <div onClick={onClick} className={isOverdue?'urgent-pulse':''} style={{
@@ -1122,9 +1125,7 @@ function SearchBar({value,onChange}){
 
 // ============== CATEGORY TABS ==============
 function CategoryTabs({active,onChange,counts}){
-  const ctx=useContext(Ctx);
-  const config=ctx?ctx.config:null;
-  const gc=(s)=>getStatusColor(s,config);
+  const gc=(s)=>getStatusColor(s,null);
   const tabs=[
     {key:'all',label:'Toutes',count:counts.all,color:'var(--dark)'},
     {key:S.NEW,label:'Nouvelles',count:counts[S.NEW]||0,color:gc(S.NEW)},
@@ -3402,7 +3403,19 @@ function AppInner({isMgr,tab,setTab,setUser,spaceCode,changeSpace}){
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+class ErrorBoundary extends React.Component{
+  constructor(props){super(props);this.state={error:null}}
+  static getDerivedStateFromError(error){return{error}}
+  render(){
+    if(this.state.error)return React.createElement('div',{style:{padding:40,textAlign:'center',background:'#111',color:'#fff',height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',alignItems:'center'}},
+      React.createElement('h2',{style:{color:'#EF4444',marginBottom:10}},'Erreur'),
+      React.createElement('pre',{style:{color:'#888',fontSize:12,maxWidth:300,overflow:'auto',whiteSpace:'pre-wrap'}},this.state.error.toString()),
+      React.createElement('button',{onClick:()=>{localStorage.clear();window.location.reload()},style:{marginTop:20,padding:'10px 20px',borderRadius:10,background:'#333',color:'#fff',fontSize:13}},'Recharger')
+    );
+    return this.props.children;
+  }
+}
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(ErrorBoundary,null,React.createElement(App)));
 </script>
 </body>
 </html>

@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.45';
+var APP_VERSION='v3.46';
 localStorage.setItem('cp_appVersion',APP_VERSION);
 </script>
 <meta name="theme-color" content="#111111">
@@ -144,17 +144,22 @@ function dedup(orders){
   return Object.values(seen);
 }
 
-const STATUS_STYLE={
-  [S.NEW]:{bg:'#EFF6FF',color:'#1D4ED8',dot:'#3B82F6',card:'#F5F8FF',border:'#3B82F6'},
-  [S.LIVRAISON]:{bg:'#DBEAFE',color:'#1E40AF',dot:'#2563EB',card:'#EBF2FF',border:'#2563EB'},
-  [S.INJOIGNABLE]:{bg:'#FEE2E2',color:'#991B1B',dot:'#EF4444',card:'#FFF5F5',border:'#EF4444'},
-  [S.RAPPELE]:{bg:'#FCE7F3',color:'#9D174D',dot:'#EC4899',card:'#FFF0F6',border:'#EC4899'},
-  [S.REPORTE]:{bg:'#FEF3C7',color:'#92400E',dot:'#F59E0B',card:'#FFFBEB',border:'#F59E0B'},
-  [S.ANNULE]:{bg:'#F3F4F6',color:'#374151',dot:'#6B7280',card:'#F9FAFB',border:'#9CA3AF'},
-  [S.LIVRE]:{bg:'#DCFCE7',color:'#166534',dot:'#22C55E',card:'#F0FDF4',border:'#22C55E'},
-  [S.ECHEC]:{bg:'#FEE2E2',color:'#991B1B',dot:'#EF4444',card:'#FFF5F5',border:'#EF4444'},
-  [S.ABANDONNE]:{bg:'#F3F4F6',color:'#374151',dot:'#6B7280',card:'#F9FAFB',border:'#9CA3AF'},
+// Status style derived from config colors
+const DEFAULT_STATUS_COLORS={
+  'Nouvelle':'#3B82F6','Livraison en cours':'#2563EB','Injoignable':'#EF4444',
+  'Rappelé':'#EC4899','Reportée':'#F59E0B','Annulée':'#6B7280',
+  'Livré':'#22C55E','Échec livraison':'#EF4444','Abandonné':'#6B7280'
 };
+function getStatusColor(status,config){
+  const colors=(config&&config.statusColors)||DEFAULT_STATUS_COLORS;
+  return colors[status]||'#6B7280';
+}
+function getStatusStyle(status,config){
+  const c=getStatusColor(status,config);
+  return{bg:c+'18',color:c,dot:c,border:c,card:c+'08'};
+}
+// Fallback for places that don't have config
+const STATUS_STYLE=Object.fromEntries(Object.values({NEW:'Nouvelle',LIVRAISON:'Livraison en cours',INJOIGNABLE:'Injoignable',RAPPELE:'Rappelé',REPORTE:'Reportée',ANNULE:'Annulée',LIVRE:'Livré',ECHEC:'Échec livraison',ABANDONNE:'Abandonné'}).map(s=>[s,getStatusStyle(s)]));
 
 const AFTER_CALL=[S.LIVRAISON,S.INJOIGNABLE,S.RAPPELE,S.REPORTE,S.ANNULE];
 const DELIVERY_FAIL=[S.ANNULE,S.REPORTE,S.INJOIGNABLE];
@@ -215,6 +220,11 @@ function loadConfig(){
   return{
     closeuseCode:'',closeuseName:'',country:'',phonePrefix:'',sheetUrls:[],sheetMappings:{},
     zones:[],
+    statusColors:{
+      'Nouvelle':'#3B82F6','Livraison en cours':'#2563EB','Injoignable':'#EF4444',
+      'Rappelé':'#EC4899','Reportée':'#F59E0B','Annulée':'#6B7280',
+      'Livré':'#22C55E','Échec livraison':'#EF4444','Abandonné':'#6B7280'
+    },
     products:[],
     salaryPerDelivery:1000,maxAttempts:3,
     timerInjo:2,timerRappel:1,
@@ -681,11 +691,12 @@ function NotifEngine({isMgr}){
 
 // ============== STATUS BADGE ==============
 function Badge({status,size='md'}){
-  const st=STATUS_STYLE[status]||STATUS_STYLE[S.NEW];
+  const {config}=useContext(Ctx);
+  const c=getStatusColor(status,config);
   const isSmall=size==='sm';
   return(
-    <span style={{display:'inline-flex',alignItems:'center',gap:5,padding:isSmall?'3px 8px':'4px 12px',borderRadius:20,fontSize:isSmall?10:12,fontWeight:700,background:st.bg,color:st.color,whiteSpace:'nowrap',letterSpacing:0.3,border:`1px solid ${st.dot}22`}}>
-      <span style={{width:7,height:7,borderRadius:4,background:st.dot,flexShrink:0}}/>
+    <span style={{display:'inline-flex',alignItems:'center',gap:5,padding:isSmall?'3px 8px':'4px 12px',borderRadius:20,fontSize:isSmall?10:12,fontWeight:700,background:c+'18',color:c,whiteSpace:'nowrap',letterSpacing:0.3}}>
+      <span style={{width:7,height:7,borderRadius:4,background:c,flexShrink:0}}/>
       {status}
     </span>
   );
@@ -719,15 +730,17 @@ function OrderCard({order,onClick}){
   const isOverdue=order.timerExp&&now>order.timerExp;
   const hasTimer=order.timerExp&&[S.INJOIGNABLE,S.RAPPELE].includes(order.status);
 
-  const st=STATUS_STYLE[order.status]||STATUS_STYLE[S.NEW];
+  const {config}=useContext(Ctx);
+  const sc=getStatusColor(order.status,config);
   return(
     <div onClick={onClick} className={isOverdue?'urgent-pulse':''} style={{
-      padding:'14px 16px 14px 20px',
-      background:isOverdue?'#FEE2E2':st.card,
+      padding:'0',background:isOverdue?'#FEE2E2':'#fff',
       borderBottom:'1px solid #EFEFEA',cursor:'pointer',
       transition:'background .15s',position:'relative',
-      borderLeft:`4px solid ${st.border}`,
     }}>
+      {/* Status color bar — full width */}
+      <div style={{height:4,background:sc,width:'100%',borderRadius:'0'}}/>
+      <div style={{padding:'12px 16px'}}>
       {/* Row 1: Order number + Client name + Price */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
         <div style={{display:'flex',alignItems:'baseline',gap:6}}>
@@ -781,6 +794,7 @@ function OrderCard({order,onClick}){
       {/* Row 7: Comment — always visible */}
       <div style={{marginTop:8,padding:'8px 10px',borderRadius:8,background:order.comment?'rgba(0,0,0,0.03)':'transparent',fontSize:12,lineHeight:1.5,color:order.comment?'#333':'#bbb',fontStyle:order.comment?'normal':'italic'}}>
         {order.comment||'Pas de commentaire'}
+      </div>
       </div>
     </div>
   );
@@ -981,7 +995,7 @@ function OrderDetail({order,onClose}){
           <div style={{marginBottom:16}}>
             <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>Raison de l'échec</div>
             <div style={{display:'flex',gap:6}}>
-              {DELIVERY_FAIL.map(ds=><button key={ds} onClick={()=>setStatus(ds)} style={{flex:1,padding:'10px 4px',borderRadius:10,fontSize:12,fontWeight:600,background:STATUS_STYLE[ds].bg,color:STATUS_STYLE[ds].color,border:`1.5px solid ${STATUS_STYLE[ds].dot}`}}>{ds}</button>)}
+              {DELIVERY_FAIL.map(ds=>{const dsc=getStatusColor(ds,config);return <button key={ds} onClick={()=>setStatus(ds)} style={{flex:1,padding:'10px 4px',borderRadius:10,fontSize:12,fontWeight:600,background:dsc+'18',color:dsc,border:`1.5px solid ${dsc}`}}>{ds}</button>})}
             </div>
           </div>
         )}
@@ -1112,15 +1126,17 @@ function SearchBar({value,onChange}){
 
 // ============== CATEGORY TABS ==============
 function CategoryTabs({active,onChange,counts}){
+  const {config}=useContext(Ctx);
+  const gc=(s)=>getStatusColor(s,config);
   const tabs=[
     {key:'all',label:'Toutes',count:counts.all,color:'var(--dark)'},
-    {key:S.NEW,label:'Nouvelles',count:counts[S.NEW]||0,color:'var(--blue-vivid)'},
-    {key:S.LIVRAISON,label:'En livraison',count:counts[S.LIVRAISON]||0,color:'var(--teal-vivid)'},
-    {key:S.RAPPELE,label:'Rappelé',count:counts[S.RAPPELE]||0,color:'var(--pink-vivid)'},
-    {key:S.INJOIGNABLE,label:'Injoignable',count:counts[S.INJOIGNABLE]||0,color:'var(--red-vivid)'},
-    {key:S.REPORTE,label:'Reportée',count:counts[S.REPORTE]||0,color:'var(--amber-vivid)'},
-    {key:S.LIVRE,label:'Livré',count:counts[S.LIVRE]||0,color:'var(--green-vivid)'},
-    {key:S.ANNULE,label:'Annulée',count:counts[S.ANNULE]||0,color:'var(--gray-vivid)'},
+    {key:S.NEW,label:'Nouvelles',count:counts[S.NEW]||0,color:gc(S.NEW)},
+    {key:S.LIVRAISON,label:'En livraison',count:counts[S.LIVRAISON]||0,color:gc(S.LIVRAISON)},
+    {key:S.RAPPELE,label:'Rappelé',count:counts[S.RAPPELE]||0,color:gc(S.RAPPELE)},
+    {key:S.INJOIGNABLE,label:'Injoignable',count:counts[S.INJOIGNABLE]||0,color:gc(S.INJOIGNABLE)},
+    {key:S.REPORTE,label:'Reportée',count:counts[S.REPORTE]||0,color:gc(S.REPORTE)},
+    {key:S.LIVRE,label:'Livré',count:counts[S.LIVRE]||0,color:gc(S.LIVRE)},
+    {key:S.ANNULE,label:'Annulée',count:counts[S.ANNULE]||0,color:gc(S.ANNULE)},
   ];
   return(
     <div style={{display:'flex',gap:6,padding:'0 16px 10px',overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none',msOverflowStyle:'none'}}>
@@ -2350,6 +2366,29 @@ function ConfigPage({isManager}){
         </div>
       </div>
 
+      {/* ======= MANAGER: Couleurs des statuts ======= */}
+      {isManager&&(
+        <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Couleurs des statuts</div>
+          {Object.values(S).map(status=>{
+            const colors=(config.statusColors)||DEFAULT_STATUS_COLORS;
+            const currentColor=colors[status]||'#6B7280';
+            return(
+              <div key={status} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 0',borderBottom:'1px solid #f5f5f0'}}>
+                <input type="color" value={currentColor} onChange={e=>{
+                  const newColors={...colors,[status]:e.target.value};
+                  upd('statusColors',newColors);
+                }} style={{width:32,height:32,border:'none',borderRadius:8,cursor:'pointer',padding:0}}/>
+                <div style={{flex:1}}>
+                  <span style={{fontSize:13,fontWeight:600}}>{status}</span>
+                </div>
+                <div style={{height:4,width:60,borderRadius:2,background:currentColor}}/>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* ======= CLOSEUSE + MANAGER: Paramètres de rappel ======= */}
       <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
         <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Paramètres de rappel</div>
@@ -2927,14 +2966,15 @@ function ManagerDashboard(){
               // For "all" period, use current order counts
               const useOrders=dashPeriod==='all';
               
+              const gc2=(s)=>getStatusColor(s,config);
               const items=[
-                {s:S.NEW,l:'Nouvelles',c:'var(--blue-vivid)',n:useOrders?(counts[S.NEW]||0):pActivity.filter(a=>a.toStatus===S.NEW).length},
-                {s:S.LIVRAISON,l:'Confirmées',c:'var(--teal-vivid)',n:useOrders?(counts[S.LIVRAISON]||0):pActivity.filter(a=>a.toStatus===S.LIVRAISON).length},
-                {s:S.INJOIGNABLE,l:'Injoignables',c:'var(--red-vivid)',n:useOrders?(counts[S.INJOIGNABLE]||0):pActivity.filter(a=>a.toStatus===S.INJOIGNABLE).length},
-                {s:S.RAPPELE,l:'Rappelés',c:'var(--pink-vivid)',n:useOrders?(counts[S.RAPPELE]||0):pActivity.filter(a=>a.toStatus===S.RAPPELE).length},
-                {s:S.REPORTE,l:'Reportées',c:'var(--amber-vivid)',n:useOrders?(counts[S.REPORTE]||0):pActivity.filter(a=>a.toStatus===S.REPORTE).length},
-                {s:S.LIVRE,l:'Livrées',c:'var(--green-vivid)',n:useOrders?(counts[S.LIVRE]||0):pActivity.filter(a=>a.toStatus===S.LIVRE).length},
-                {s:S.ANNULE,l:'Annulées',c:'var(--gray-vivid)',n:useOrders?(counts[S.ANNULE]||0):pActivity.filter(a=>a.toStatus===S.ANNULE).length},
+                {s:S.NEW,l:'Nouvelles',c:gc2(S.NEW),n:useOrders?(counts[S.NEW]||0):pActivity.filter(a=>a.toStatus===S.NEW).length},
+                {s:S.LIVRAISON,l:'Confirmées',c:gc2(S.LIVRAISON),n:useOrders?(counts[S.LIVRAISON]||0):pActivity.filter(a=>a.toStatus===S.LIVRAISON).length},
+                {s:S.INJOIGNABLE,l:'Injoignables',c:gc2(S.INJOIGNABLE),n:useOrders?(counts[S.INJOIGNABLE]||0):pActivity.filter(a=>a.toStatus===S.INJOIGNABLE).length},
+                {s:S.RAPPELE,l:'Rappelés',c:gc2(S.RAPPELE),n:useOrders?(counts[S.RAPPELE]||0):pActivity.filter(a=>a.toStatus===S.RAPPELE).length},
+                {s:S.REPORTE,l:'Reportées',c:gc2(S.REPORTE),n:useOrders?(counts[S.REPORTE]||0):pActivity.filter(a=>a.toStatus===S.REPORTE).length},
+                {s:S.LIVRE,l:'Livrées',c:gc2(S.LIVRE),n:useOrders?(counts[S.LIVRE]||0):pActivity.filter(a=>a.toStatus===S.LIVRE).length},
+                {s:S.ANNULE,l:'Annulées',c:gc2(S.ANNULE),n:useOrders?(counts[S.ANNULE]||0):pActivity.filter(a=>a.toStatus===S.ANNULE).length},
               ];
               const totalP=items.reduce((s,r)=>s+r.n,0)||1;
               return items.map((r,i)=>(

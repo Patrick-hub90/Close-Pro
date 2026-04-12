@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v4.0';
+var APP_VERSION='v4.1';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   localStorage.removeItem('cp_user');
@@ -1193,6 +1193,8 @@ function OrdersPage({isMgr}){
   const [selectMode,setSelectMode]=useState(false);
   const [selected,setSelected]=useState(new Set());
   const [showBulkTimer,setShowBulkTimer]=useState(false);
+  const [showBulkProd,setShowBulkProd]=useState(false);
+  const [showBulkZone,setShowBulkZone]=useState(false);
 
   const filtered=useMemo(()=>{
     let list=filter==='all'?sorted:filter==='tocall'?sorted.filter(o=>o.status===S.NEW||(o.timerExp&&Date.now()>o.timerExp&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status))):sorted.filter(o=>o.status===filter);
@@ -1339,10 +1341,21 @@ function OrdersPage({isMgr}){
             <div style={{flex:1,fontSize:13,fontWeight:700,textAlign:'center'}}>{selected.size} sélectionnée{selected.size>1?'s':''}</div>
           </div>
           <div style={{display:'flex',gap:6}}>
-            <button onClick={()=>{if(selected.size>0)setShowBulkTimer(true)}} disabled={selected.size===0} style={{flex:1,padding:'10px',borderRadius:10,background:selected.size>0?'var(--dark)':'#eee',color:selected.size>0?'#fff':'#999',fontSize:13,fontWeight:700}}>
+            <button onClick={()=>{if(selected.size>0)setShowBulkTimer(true)}} disabled={selected.size===0} style={{flex:1,padding:'10px',borderRadius:10,background:selected.size>0?'var(--dark)':'#eee',color:selected.size>0?'#fff':'#999',fontSize:11,fontWeight:700}}>
               Timer
             </button>
-            <button onClick={()=>{if(selected.size>0&&confirm('Supprimer '+selected.size+' commande(s) ?')){deleteOrders([...selected]);setSelected(new Set());setSelectMode(false)}}} disabled={selected.size===0} style={{flex:1,padding:'10px',borderRadius:10,background:selected.size>0?'var(--red-vivid)':'#eee',color:selected.size>0?'#fff':'#999',fontSize:13,fontWeight:700}}>
+            <button onClick={()=>{if(selected.size>0)setShowBulkProd(true)}} disabled={selected.size===0} style={{flex:1,padding:'10px',borderRadius:10,background:selected.size>0?'var(--dark)':'#eee',color:selected.size>0?'#fff':'#999',fontSize:11,fontWeight:700}}>
+              Produit
+            </button>
+            <button onClick={()=>{if(selected.size>0)setShowBulkZone(true)}} disabled={selected.size===0} style={{flex:1,padding:'10px',borderRadius:10,background:selected.size>0?'var(--dark)':'#eee',color:selected.size>0?'#fff':'#999',fontSize:11,fontWeight:700}}>
+              Zone
+            </button>
+          </div>
+          <div style={{display:'flex',gap:6,marginTop:6}}>
+            <button onClick={()=>{if(selected.size>0){const p=prompt('Nouveau prix (F)');if(p){[...selected].forEach(id=>updateOrder(id,{pricePaid:Number(p)}));setSelected(new Set());setSelectMode(false)}}}} disabled={selected.size===0} style={{flex:1,padding:'10px',borderRadius:10,background:selected.size>0?'var(--amber-vivid)':'#eee',color:selected.size>0?'#fff':'#999',fontSize:11,fontWeight:700}}>
+              Prix
+            </button>
+            <button onClick={()=>{if(selected.size>0&&confirm('Supprimer '+selected.size+' commande(s) ?')){deleteOrders([...selected]);setSelected(new Set());setSelectMode(false)}}} disabled={selected.size===0} style={{flex:1,padding:'10px',borderRadius:10,background:selected.size>0?'var(--red-vivid)':'#eee',color:selected.size>0?'#fff':'#999',fontSize:11,fontWeight:700}}>
               Supprimer
             </button>
           </div>
@@ -1377,6 +1390,51 @@ function OrdersPage({isMgr}){
               ))}
             </div>
             <button onClick={()=>setShowBulkTimer(false)} style={{width:'100%',marginTop:10,padding:12,borderRadius:12,background:'#f0f0f0',fontWeight:600,fontSize:13,color:'var(--muted)'}}>Annuler</button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk product modal */}
+      {showBulkProd&&(
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:100,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'flex-end'}} onClick={()=>setShowBulkProd(false)}>
+          <div style={{background:'#fff',borderRadius:'20px 20px 0 0',width:'100%',padding:20}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>Attribuer un produit</div>
+            <div style={{fontSize:12,color:'var(--muted)',marginBottom:14}}>{selected.size} commande{selected.size>1?'s':''}</div>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {(config.products||[]).map(p=>(
+                <button key={p.id} onClick={()=>{
+                  [...selected].forEach(id=>updateOrder(id,{productId:p.id,productName:p.name,totalPrice:p.price||0}));
+                  setShowBulkProd(false);setSelected(new Set());setSelectMode(false);
+                }} style={{padding:14,borderRadius:12,background:'#f5f5f0',fontWeight:600,fontSize:14,textAlign:'left'}}>
+                  {p.name}
+                </button>
+              ))}
+              {(config.products||[]).length===0&&<div style={{padding:12,textAlign:'center',color:'var(--muted)',fontSize:13}}>Aucun produit dans le catalogue</div>}
+            </div>
+            <button onClick={()=>setShowBulkProd(false)} style={{width:'100%',marginTop:10,padding:12,borderRadius:12,background:'#f0f0f0',fontWeight:600,fontSize:13,color:'var(--muted)'}}>Annuler</button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk zone modal */}
+      {showBulkZone&&(
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:100,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'flex-end'}} onClick={()=>setShowBulkZone(false)}>
+          <div style={{background:'#fff',borderRadius:'20px 20px 0 0',width:'100%',padding:20}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>Attribuer une zone</div>
+            <div style={{fontSize:12,color:'var(--muted)',marginBottom:14}}>{selected.size} commande{selected.size>1?'s':''}</div>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {(config.zones||[]).map(z=>(
+                <button key={z.name} onClick={()=>{
+                  [...selected].forEach(id=>updateOrder(id,{deliveryZone:z.name,deliveryCost:z.price||0}));
+                  setShowBulkZone(false);setSelected(new Set());setSelectMode(false);
+                }} style={{padding:14,borderRadius:12,background:'#f5f5f0',fontWeight:600,fontSize:14,textAlign:'left',display:'flex',justifyContent:'space-between'}}>
+                  <span>{z.name}{z.desc?' — '+z.desc:''}</span>
+                  <span style={{color:'var(--muted)'}}>{(z.price||0).toLocaleString()} F</span>
+                </button>
+              ))}
+              {(config.zones||[]).length===0&&<div style={{padding:12,textAlign:'center',color:'var(--muted)',fontSize:13}}>Aucune zone configurée</div>}
+            </div>
+            <button onClick={()=>setShowBulkZone(false)} style={{width:'100%',marginTop:10,padding:12,borderRadius:12,background:'#f0f0f0',fontWeight:600,fontSize:13,color:'var(--muted)'}}>Annuler</button>
           </div>
         </div>
       )}
@@ -1494,10 +1552,11 @@ function ReportPage(){
   const annulees=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.ANNULE));
 
   // ===== TAUX =====
-  const totalCmd=recues.length||orders.length;
-  const tauxConfirm=totalCmd>0?Math.round(confirmees.length/totalCmd*100):0;
-  const tauxLiv=confirmees.length>0?Math.round(livrees.length/confirmees.length*100):0;
-  const tauxConversion=totalCmd>0?Math.round(livrees.length/totalCmd*100):0;
+  const totalPeriod=appelees.length;
+  const tauxConfirm=totalPeriod>0?Math.round(confirmees.length/totalPeriod*100):0;
+  const totalConfAndLiv=Math.max(confirmees.length,livrees.length);
+  const tauxLiv=totalConfAndLiv>0?Math.round(livrees.length/totalConfAndLiv*100):0;
+  const tauxConversion=recues.length>0?Math.round(livrees.length/recues.length*100):0;
   const tauxReponse=appelees.length>0?Math.round((appelees.length-injo.length)/appelees.length*100):0;
   
   // Panier moyen
@@ -1515,17 +1574,20 @@ function ReportPage(){
 
   // Par produit
   const parProduit=useMemo(()=>{
+    const prods=(config.products||[]);
+    if(!prods.length)return[];
     const map={};
+    prods.forEach(p=>{map[p.name]={total:0,livrees:0,confirmees:0,ca:0}});
     const filtered=period==='max'?orders:orders.filter(o=>inRange(o.createdAt)||o.attempts.some(a=>inRange(a.ts)));
     filtered.forEach(o=>{
-      const name=o.productName||o.sheetProductName||'Non attribué';
-      if(!map[name])map[name]={total:0,livrees:0,confirmees:0,ca:0};
-      map[name].total++;
-      if(o.status===S.LIVRE||o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRE)){map[name].livrees++;map[name].ca+=(o.pricePaid||o.totalPrice)*(o.quantity||1)}
-      if(o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRAISON))map[name].confirmees++;
+      const prod=prods.find(p=>p.id===o.productId)||prods.find(p=>norm(p.name)===norm(o.productName||''));
+      if(!prod)return;
+      map[prod.name].total++;
+      if(o.status===S.LIVRE||o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRE)){map[prod.name].livrees++;map[prod.name].ca+=(o.pricePaid||o.totalPrice)*(o.quantity||1)}
+      if(o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRAISON))map[prod.name].confirmees++;
     });
     return Object.entries(map).sort((a,b)=>b[1].total-a[1].total);
-  },[orders,period,periodRange]);
+  },[orders,config.products,period,periodRange]);
 
   // ===== FINANCES =====
   const pCA=livrees.reduce((s,o)=>(o.pricePaid||o.totalPrice)*(o.quantity||1)+s,0);
@@ -1571,9 +1633,9 @@ function ReportPage(){
         <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Résumé</div>
         {[
           {l:'Commandes reçues',v:recues.length,c:'var(--text)'},
-          {l:'Appelées',v:appelees.length,c:'var(--text)',pct:totalCmd>0?Math.round(appelees.length/totalCmd*100)+'%':null},
-          {l:'Confirmées (Livr. en cours)',v:confirmees.length,c:gc(S.LIVRAISON),pct:tauxConfirm+'%'},
-          {l:'Livrées',v:livrees.length,c:gc(S.LIVRE),pct:tauxConversion+'%'},
+          {l:'Appelées',v:appelees.length,c:'var(--text)',pct:recues.length>0?Math.round(appelees.length/recues.length*100)+'%':null},
+          {l:'Confirmées',v:confirmees.length,c:gc(S.LIVRAISON),pct:totalPeriod>0?tauxConfirm+'%':null},
+          {l:'Livrées',v:livrees.length,c:gc(S.LIVRE),pct:recues.length>0?tauxConversion+'%':null},
           {l:'En discussion WhatsApp',v:enDiscussion.length,c:gc(S.DISCUSSION)},
           {l:'Injoignables',v:injo.length,c:gc(S.INJOIGNABLE)},
           {l:'Rappelés',v:rappeles.length,c:gc(S.RAPPELE)},
@@ -1594,9 +1656,9 @@ function ReportPage(){
         <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Performances</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
           {[
-            {l:'Taux confirmation',v:tauxConfirm+'%',sub:confirmees.length+'/'+totalCmd,ok:tauxConfirm>=50},
-            {l:'Taux livraison',v:tauxLiv+'%',sub:livrees.length+'/'+confirmees.length,ok:tauxLiv>=80},
-            {l:'Taux conversion',v:tauxConversion+'%',sub:livrees.length+'/'+totalCmd,ok:tauxConversion>=30},
+            {l:'Taux confirmation',v:tauxConfirm+'%',sub:confirmees.length+'/'+totalPeriod+' appelées',ok:tauxConfirm>=50},
+            {l:'Taux livraison',v:tauxLiv+'%',sub:livrees.length+'/'+totalConfAndLiv+' confirmées',ok:tauxLiv>=80},
+            {l:'Taux conversion',v:tauxConversion+'%',sub:livrees.length+'/'+recues.length+' reçues',ok:tauxConversion>=30},
             {l:'Taux réponse',v:tauxReponse+'%',sub:(appelees.length-injo.length)+'/'+appelees.length,ok:tauxReponse>=70},
             {l:'Panier moyen',v:panierMoyen.toLocaleString()+' F',sub:livrees.length+' livraisons',ok:true},
             {l:'Temps 1er contact',v:tempsContact<60?tempsContact+' min':Math.floor(tempsContact/60)+'h'+String(tempsContact%60).padStart(2,'0'),sub:'moyenne',ok:tempsContact<60},
@@ -2743,18 +2805,23 @@ function ManagerDashboard(){
   const annules=counts[S.ANNULE]||0;
   const total=counts.all||0;
   
-  // Today's activity from Firebase counters
-  const todayAppeles=ds.appeles||0;
-  const todayConfirmes=ds.confirmes||0;
-  const todayLivres=ds.livres||0;
+  // Today's stats — calculated from orders for accuracy (same as Report)
+  const inToday=(iso)=>iso&&new Date(iso).toDateString()===today;
+  const todayAppeles=orders.filter(o=>o.attempts.some(a=>inToday(a.ts))).length;
+  const todayConfirmes=orders.filter(o=>o.attempts.some(a=>inToday(a.ts)&&a.status===S.LIVRAISON)).length;
+  const todayLivres=orders.filter(o=>{
+    if(o.deliveredAt&&inToday(o.deliveredAt))return true;
+    return o.attempts.some(a=>inToday(a.ts)&&a.status===S.LIVRE);
+  }).length;
+  const todayTotalConfAndLiv=Math.max(todayConfirmes,todayLivres);
 
   const tauxConfirm=todayAppeles>0?Math.round(todayConfirmes/todayAppeles*100):0;
-  const tauxLiv=todayConfirmes>0?Math.round(todayLivres/todayConfirmes*100):0;
+  const tauxLiv=todayTotalConfAndLiv>0?Math.round(todayLivres/todayTotalConfAndLiv*100):0;
   const deliveryOk=tauxLiv>=80;
   const salaryRate=calcSalaryRate(tauxConfirm,tauxLiv,config.salaryGrid);
 
   // Finances from actual delivered orders today
-  const livresAuj=orders.filter(o=>o.deliveredAt?new Date(o.deliveredAt).toDateString()===today:o.status===S.LIVRE&&o.attempts.some(a=>new Date(a.ts).toDateString()===today&&a.status===S.LIVRE));
+  const livresAuj=orders.filter(o=>{if(o.deliveredAt&&inToday(o.deliveredAt))return true;return o.attempts.some(a=>inToday(a.ts)&&a.status===S.LIVRE)});
   const pCA=livresAuj.reduce((s,o)=>(o.pricePaid||o.totalPrice)*o.quantity+s,0);
   const pDelCost=livresAuj.reduce((s,o)=>o.deliveryCost+s,0);
   const pSalary=livresAuj.length*salaryRate;
@@ -2845,7 +2912,7 @@ function ManagerDashboard(){
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
               <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Dernière activité</div>
               <div style={{fontSize:16,fontWeight:800,letterSpacing:-0.5,marginTop:2,color:inactiveMins>=30?'var(--red-vivid)':inactiveMins>=15?'var(--amber-vivid)':'var(--green-vivid)'}}>{lastActionTime?new Date(lastActionTime).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'}):'—'}</div>
-              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{inactiveMins<999?'il y a '+inactiveMins+' min':'Aucune action'}</div>
+              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>{inactiveMins<999?(inactiveMins<60?'il y a '+inactiveMins+' min':'il y a '+Math.floor(inactiveMins/60)+'h'+String(inactiveMins%60).padStart(2,'0')):'Aucune action'}</div>
             </div>
           </div>
 

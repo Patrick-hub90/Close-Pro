@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v3.52';
+var APP_VERSION='v4.0';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   localStorage.removeItem('cp_user');
@@ -88,7 +88,7 @@ const Ctx=createContext();
 const S={
   NEW:'Nouvelle',LIVRAISON:'Livraison en cours',INJOIGNABLE:'Injoignable',
   RAPPELE:'Rappelé',REPORTE:'Reportée',ANNULE:'Annulée',
-  LIVRE:'Livré',ECHEC:'Échec livraison',ABANDONNE:'Abandonné'
+  DISCUSSION:'En discussion',LIVRE:'Livré',ECHEC:'Échec livraison',ABANDONNE:'Abandonné'
 };
 
 // Normalize accents: é→e, è→e, etc.
@@ -103,6 +103,7 @@ function normalizeStatus(st){
   if(t.includes('livre'))return S.LIVRE;
   if(t.includes('injoignable'))return S.INJOIGNABLE;
   if(t.includes('rappel'))return S.RAPPELE;
+  if(t.includes('discussion'))return S.DISCUSSION;
   if(t.includes('report'))return S.REPORTE;
   if(t.includes('annul'))return S.ANNULE;
   if(t.includes('echec'))return S.ECHEC;
@@ -155,7 +156,7 @@ function dedup(orders){
 // Status style derived from config colors
 const DEFAULT_STATUS_COLORS={
   'Nouvelle':'#3B82F6','Livraison en cours':'#2563EB','Injoignable':'#EF4444',
-  'Rappelé':'#EC4899','Reportée':'#F59E0B','Annulée':'#6B7280',
+  'Rappelé':'#EC4899','En discussion':'#8B5CF6','Reportée':'#F59E0B','Annulée':'#6B7280',
   'Livré':'#22C55E','Échec livraison':'#EF4444','Abandonné':'#6B7280'
 };
 function getStatusColor(status,config){
@@ -177,6 +178,7 @@ function calcUrg(o){
   const n=Date.now();
   if([S.LIVRE,S.ANNULE,S.ABANDONNE].includes(o.status))return 0;
   if(o.timerExp&&n>o.timerExp)return 1000+(n-o.timerExp)/36e5*100;
+  if(o.status===S.DISCUSSION)return 450;
   if(o.status===S.ECHEC)return 950;
   if(o.status===S.INJOIGNABLE)return 900;
   if(o.timerExp&&(o.timerExp-n)<18e5)return 800;
@@ -227,12 +229,12 @@ function loadConfig(){
     zones:[],
     statusColors:{
       'Nouvelle':'#3B82F6','Livraison en cours':'#2563EB','Injoignable':'#EF4444',
-      'Rappelé':'#EC4899','Reportée':'#F59E0B','Annulée':'#6B7280',
+      'Rappelé':'#EC4899','En discussion':'#8B5CF6','Reportée':'#F59E0B','Annulée':'#6B7280',
       'Livré':'#22C55E','Échec livraison':'#EF4444','Abandonné':'#6B7280'
     },
     products:[],
     salaryPerDelivery:1000,maxAttempts:3,
-    timerInjo:2,timerRappel:1,
+    timerInjo:2,timerRappel:1,alerteReaction:30,
     whatsappPhone:'',whatsappApiKey:'',
     dailyReportHour:20,
     salaryGrid:[],
@@ -402,7 +404,7 @@ function Provider({children,spaceCode,isMgr}){
         const statusKey={
           [S.NEW]:'nouvelles',[S.LIVRAISON]:'confirmes',[S.LIVRE]:'livres',
           [S.INJOIGNABLE]:'injoignables',[S.RAPPELE]:'rappeles',[S.REPORTE]:'reportes',
-          [S.ANNULE]:'annules',[S.ECHEC]:'echecs',[S.ABANDONNE]:'abandonnes'
+          [S.DISCUSSION]:'discussions',[S.ANNULE]:'annules',[S.ECHEC]:'echecs',[S.ABANDONNE]:'abandonnes'
         };
         const key=statusKey[upd.status];
         if(key)statsDoc.set({[key]:FV.increment(1),appeles:FV.increment(1),lastUpdate:new Date().toISOString()},{merge:true}).catch(()=>{});
@@ -793,6 +795,22 @@ function OrderCard({order,onClick}){
       <div style={{marginTop:8,padding:'8px 10px',borderRadius:8,background:order.comment?'rgba(0,0,0,0.03)':'transparent',fontSize:12,lineHeight:1.5,color:order.comment?'#333':'#bbb',fontStyle:order.comment?'normal':'italic'}}>
         {order.comment||'Pas de commentaire'}
       </div>
+
+      {/* Reaction time alert for Nouvelle */}
+      {order.status===S.NEW&&config.alerteReaction&&(()=>{
+        const mins=Math.floor((now-new Date(order.createdAt).getTime())/60000);
+        return mins>=(config.alerteReaction||30)?(
+          <div style={{marginTop:6,padding:'5px 10px',borderRadius:6,background:'#FEE2E2',fontSize:11,color:'#991B1B',fontWeight:600}}>
+            ⏰ En attente depuis {mins} min — objectif: {config.alerteReaction||30} min
+          </div>
+        ):null;
+      })()}
+
+      {/* Row 8: Last modification date */}
+      <div style={{marginTop:6,fontSize:10,color:'#aaa',display:'flex',justifyContent:'space-between'}}>
+        <span>Reçue: {fmtDate(order.createdAt)} {fmtTime(order.createdAt)}</span>
+        {order.updatedAt&&order.updatedAt!==order.createdAt&&<span>Modif: {fmtDate(order.updatedAt)} {fmtTime(order.updatedAt)}</span>}
+      </div>
     </div>
   );
 }
@@ -800,6 +818,8 @@ function OrderCard({order,onClick}){
 // ============== ORDER DETAIL MODAL ==============
 function OrderDetail({order,onClose}){
   const {updateOrder,config,now,orders}=useContext(Ctx);
+  const hasActed=useRef(false);
+  const originalStatus=useRef(order.status);
   const [status,setStatus]=useState('');
   const [comment,setComment]=useState('');
   const [pricePaid,setPricePaid]=useState(order.pricePaid||order.totalPrice);
@@ -821,8 +841,12 @@ function OrderDetail({order,onClose}){
   };
   const openWa=(msg)=>{
     const encoded=encodeURIComponent(msg);
-    window.open(`https://wa.me/${wa}?text=${encoded}`,'_blank');
+    window.open('https://wa.me/'+wa+'?text='+encoded,'_blank');
     setShowWa(false);
+    // Auto-set "En discussion" if still Nouvelle
+    if(order.status===S.NEW){
+      updateOrder(order.id,{status:S.DISCUSSION,attempts:[...order.attempts,{ts:new Date().toISOString(),status:S.DISCUSSION,comment:'Message WhatsApp envoyé'}]});
+    }
   };
   const zonePrice=zone==='custom'?Number(customZP):config.zones.find(z=>z.name===zone)?.price||0;
 
@@ -839,6 +863,7 @@ function OrderDetail({order,onClose}){
 
   const save=()=>{
     if(!status){alert('Sélectionne un statut');return}
+    hasActed.current=true;
     if(!comment.trim()&&[S.RAPPELE,S.REPORTE].includes(status)){alert('Commentaire obligatoire pour ce statut');return}
     const u={status,comment:comment||order.comment};
     u.attempts=[...order.attempts,{ts:new Date().toISOString(),status,comment}];
@@ -861,7 +886,12 @@ function OrderDetail({order,onClose}){
             <div style={{fontSize:20,fontWeight:700,letterSpacing:-0.5}}>{order.orderNumber}</div>
             <div style={{fontSize:15,fontWeight:500,marginTop:2}}>{order.fullName}</div>
           </div>
-          <button onClick={onClose} style={{background:'#f2f2ef',borderRadius:12,padding:8,display:'flex'}}><div style={{width:20,height:20}}><I.x/></div></button>
+          <button onClick={()=>{
+            if(order.status===S.NEW&&!hasActed.current){
+              if(!confirm('Ce client n\'a pas encore été contacté. Fermer quand même ?'))return;
+            }
+            onClose();
+          }} style={{background:'#f2f2ef',borderRadius:12,padding:8,display:'flex'}}><div style={{width:20,height:20}}><I.x/></div></button>
         </div>
 
         {/* Action buttons */}
@@ -982,7 +1012,7 @@ function OrderDetail({order,onClose}){
           <label style={{fontSize:13,fontWeight:700,display:'block',marginBottom:6}}>Nouveau statut</label>
           <select className="select" value={status} onChange={e=>{setStatus(e.target.value);if(e.target.value===S.INJOIGNABLE){setTimerH(2);setTimerMode('hours')}if(e.target.value===S.RAPPELE){setTimerH(1);setTimerMode('hours')}if(e.target.value===S.REPORTE){setTimerMode('date');setTimerDate('')}}}>
             <option value="">— Choisir —</option>
-            {[S.LIVRAISON,S.LIVRE,S.INJOIGNABLE,S.RAPPELE,S.REPORTE,S.ANNULE].map(s=><option key={s} value={s}>{s}</option>)}
+            {[S.LIVRAISON,S.LIVRE,S.INJOIGNABLE,S.RAPPELE,S.DISCUSSION,S.REPORTE,S.ANNULE].map(s=><option key={s} value={s}>{s}</option>)}
           </select>
         </div>
 
@@ -1111,6 +1141,7 @@ function CategoryTabs({active,onChange,counts}){
     {key:S.NEW,label:'Nouvelles',count:counts[S.NEW]||0,color:gc(S.NEW)},
     {key:S.LIVRAISON,label:'En livraison',count:counts[S.LIVRAISON]||0,color:gc(S.LIVRAISON)},
     {key:S.RAPPELE,label:'Rappelé',count:counts[S.RAPPELE]||0,color:gc(S.RAPPELE)},
+    {key:S.DISCUSSION,label:'En discussion',count:counts[S.DISCUSSION]||0,color:gc(S.DISCUSSION)},
     {key:S.INJOIGNABLE,label:'Injoignable',count:counts[S.INJOIGNABLE]||0,color:gc(S.INJOIGNABLE)},
     {key:S.REPORTE,label:'Reportée',count:counts[S.REPORTE]||0,color:gc(S.REPORTE)},
     {key:S.LIVRE,label:'Livré',count:counts[S.LIVRE]||0,color:gc(S.LIVRE)},
@@ -1401,357 +1432,259 @@ function OrdersPage({isMgr}){
 
 // ============== REPORT PAGE ==============
 function ReportPage(){
-  const {orders,config,expenses,addExpense,removeExpense,stats,counts,now}=useContext(Ctx);
+  const {orders,config,expenses,addExpense,removeExpense,now,activity}=useContext(Ctx);
   const [showExpForm,setShowExpForm]=useState(false);
   const [expLabel,setExpLabel]=useState('');
   const [expAmount,setExpAmount]=useState('');
   const [period,setPeriod]=useState('today');
+  const [customFrom,setCustomFrom]=useState('');
+  const [customTo,setCustomTo]=useState('');
 
-  // Period helpers
+  // Period calculation
   const periodRange=useMemo(()=>{
     const end=new Date();end.setHours(23,59,59,999);
     const start=new Date();start.setHours(0,0,0,0);
     if(period==='today')return{start,end,label:"Aujourd'hui"};
-    if(period==='yesterday'){const s=new Date(start);s.setDate(s.getDate()-1);const e=new Date(end);e.setDate(e.getDate()-1);return{start:s,end:e,label:'Hier'}}
+    if(period==='yesterday'){const s=new Date(start);s.setDate(s.getDate()-1);const e=new Date(start);e.setTime(e.getTime()-1);return{start:s,end:e,label:'Hier'}}
+    if(period==='3d'){const s=new Date(start);s.setDate(s.getDate()-2);return{start:s,end,label:'3 derniers jours'}}
     if(period==='7d'){const s=new Date(start);s.setDate(s.getDate()-6);return{start:s,end,label:'7 derniers jours'}}
     if(period==='30d'){const s=new Date(start);s.setDate(s.getDate()-29);return{start:s,end,label:'30 derniers jours'}}
-    if(period==='all')return{start:new Date(0),end,label:'Tout'};
+    if(period==='6m'){const s=new Date(start);s.setMonth(s.getMonth()-6);return{start:s,end,label:'6 derniers mois'}}
+    if(period==='1y'){const s=new Date(start);s.setFullYear(s.getFullYear()-1);return{start:s,end,label:'1 an'}}
+    if(period==='max')return{start:new Date(0),end,label:'Maximum'};
+    if(period==='custom'&&customFrom&&customTo){
+      const s=new Date(customFrom);s.setHours(0,0,0,0);
+      const e=new Date(customTo);e.setHours(23,59,59,999);
+      return{start:s,end:e,label:s.toLocaleDateString('fr',{day:'2-digit',month:'short'})+' → '+e.toLocaleDateString('fr',{day:'2-digit',month:'short'})};
+    }
     return{start,end,label:"Aujourd'hui"};
-  },[period]);
+  },[period,customFrom,customTo]);
 
-  const inRange=(iso)=>{const d=new Date(iso);return d>=periodRange.start&&d<=periodRange.end};
-  const prevRange=useMemo(()=>{
-    const dur=periodRange.end-periodRange.start;
-    return{start:new Date(periodRange.start.getTime()-dur-1),end:new Date(periodRange.start.getTime()-1)};
-  },[periodRange]);
-  const inPrev=(iso)=>{const d=new Date(iso);return d>=prevRange.start&&d<=prevRange.end};
+  const inRange=(iso)=>{if(!iso)return false;const d=new Date(iso);return d>=periodRange.start&&d<=periodRange.end};
 
-  // Period-filtered data
+  // ===== MÉTRIQUES =====
+  // Commandes reçues dans la période
+  const recues=orders.filter(o=>inRange(o.createdAt));
+  
+  // Appelées = commandes qui ont eu au moins un changement de statut dans la période (1 commande = 1 appelée max)
+  const appelees=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)));
+  
+  // Confirmées = statut passé à Livraison en cours dans la période
+  const confirmees=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRAISON));
+  
+  // Livrées = statut passé à Livré dans la période
+  const livrees=orders.filter(o=>{
+    if(o.deliveredAt&&inRange(o.deliveredAt))return true;
+    return o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRE);
+  });
+  
+  // En discussion WhatsApp
+  const enDiscussion=orders.filter(o=>o.status===S.DISCUSSION);
+  
+  // Injoignables dans la période
+  const injo=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.INJOIGNABLE));
+  
+  // Rappelés
+  const rappeles=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.RAPPELE));
+  
+  // Reportées
+  const reportees=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.REPORTE));
+  
+  // Annulées dans la période
+  const annulees=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.ANNULE));
+
+  // ===== TAUX =====
+  const totalCmd=recues.length||orders.length;
+  const tauxConfirm=totalCmd>0?Math.round(confirmees.length/totalCmd*100):0;
+  const tauxLiv=confirmees.length>0?Math.round(livrees.length/confirmees.length*100):0;
+  const tauxConversion=totalCmd>0?Math.round(livrees.length/totalCmd*100):0;
+  const tauxReponse=appelees.length>0?Math.round((appelees.length-injo.length)/appelees.length*100):0;
+  
+  // Panier moyen
+  const panierMoyen=livrees.length>0?Math.round(livrees.reduce((s,o)=>(o.pricePaid||o.totalPrice)*(o.quantity||1)+s,0)/livrees.length):0;
+  
+  // Temps moyen 1er contact (minutes)
+  const tempsContact=useMemo(()=>{
+    const times=appelees.map(o=>{
+      const firstAttempt=o.attempts[0];
+      if(!firstAttempt)return null;
+      return(new Date(firstAttempt.ts)-new Date(o.createdAt))/60000;
+    }).filter(t=>t!==null&&t>=0&&t<14400);
+    return times.length>0?Math.round(times.reduce((s,t)=>s+t,0)/times.length):0;
+  },[appelees]);
+
+  // Par produit
+  const parProduit=useMemo(()=>{
+    const map={};
+    const filtered=period==='max'?orders:orders.filter(o=>inRange(o.createdAt)||o.attempts.some(a=>inRange(a.ts)));
+    filtered.forEach(o=>{
+      const name=o.productName||o.sheetProductName||'Non attribué';
+      if(!map[name])map[name]={total:0,livrees:0,confirmees:0,ca:0};
+      map[name].total++;
+      if(o.status===S.LIVRE||o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRE)){map[name].livrees++;map[name].ca+=(o.pricePaid||o.totalPrice)*(o.quantity||1)}
+      if(o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRAISON))map[name].confirmees++;
+    });
+    return Object.entries(map).sort((a,b)=>b[1].total-a[1].total);
+  },[orders,period,periodRange]);
+
+  // ===== FINANCES =====
+  const pCA=livrees.reduce((s,o)=>(o.pricePaid||o.totalPrice)*(o.quantity||1)+s,0);
+  const pDelCost=livrees.reduce((s,o)=>(o.deliveryCost||0)+s,0);
+  const salaryRate=config.salaryPerDelivery||1000;
+  const pSalary=livrees.length*salaryRate;
   const pExpenses=expenses.filter(e=>inRange(e.date));
-  const pAppeles=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)));
-  const pConfirmes=pAppeles.filter(o=>{const pa=o.attempts.filter(a=>inRange(a.ts));return pa.some(a=>[S.LIVRAISON,S.LIVRE].includes(a.status))});
-  const pLivres=orders.filter(o=>o.deliveredAt?inRange(o.deliveredAt):o.status===S.LIVRE&&o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRE));
-  const pRecues=orders.filter(o=>inRange(o.createdAt));
-  const pInjo=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.INJOIGNABLE));
-  const pReporte=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.REPORTE));
-  const pAnnule=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.ANNULE));
-
-  // Previous period
-  const prevAppeles=orders.filter(o=>o.attempts.some(a=>inPrev(a.ts)));
-  const prevConfirmes=prevAppeles.filter(o=>{const pa=o.attempts.filter(a=>inPrev(a.ts));return pa.some(a=>[S.LIVRAISON,S.LIVRE].includes(a.status))});
-  const prevTauxConfirm=prevAppeles.length>0?Math.round(prevConfirmes.length/prevAppeles.length*100):null;
-
-  // Rates
-  const tauxConfirm=pAppeles.length>0?Math.round(pConfirmes.length/pAppeles.length*100):0;
-  const diffConfirm=prevTauxConfirm!==null?tauxConfirm-prevTauxConfirm:null;
-
-  // Delivery rate — period-filtered
-  const pConfirmedAll=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&[S.LIVRAISON,S.LIVRE].includes(a.status)));
-  const tauxLiv=pConfirmedAll.length>0?Math.round(pLivres.length/pConfirmedAll.length*100):0;
-
-  // Dynamic salary
-  const deliveryOk=tauxLiv>=80;
-  const salaryRate=calcSalaryRate(tauxConfirm,tauxLiv,config.salaryGrid);
-  const currentPalier=getPalierFromRate(salaryRate,config.salaryGrid);
-
-  // Finances for the period
-  const pCA=pLivres.reduce((s,o)=>(o.pricePaid||o.totalPrice)*o.quantity+s,0);
-  const pDelCost=pLivres.reduce((s,o)=>o.deliveryCost+s,0);
-  const pSalary=pLivres.length*salaryRate;
   const pExpTotal=pExpenses.reduce((s,e)=>e.amount+s,0);
   const toVerse=pCA-pDelCost-pSalary-pExpTotal;
 
-  // Next palier
-  const sortedGrid=[...(config.salaryGrid||[])].sort((a,b)=>a.minConfirm-b.minConfirm);
-  const currentIdx=sortedGrid.findIndex(t=>t.rate===salaryRate);
-  const nextPalier=currentIdx<sortedGrid.length-1?sortedGrid[currentIdx+1]:null;
-
-  // 17h alert: ALL orders that should have been called today (new + expired timers)
-  const h17=new Date();h17.setHours(17,0,0,0);
-  const midnight=new Date();midnight.setHours(23,59,59,999);
-  const nonAppelesToday=orders.filter(o=>{
-    if(o.status===S.NEW)return true;
-    if(o.timerExp&&now>o.timerExp&&[S.INJOIGNABLE,S.RAPPELE,S.REPORTE].includes(o.status))return true;
-    return false;
-  });
-  const show17hAlert=nonAppelesToday.length>0&&now>=h17.getTime()&&now<=midnight.getTime();
-  const showPreAlert=nonAppelesToday.length>0&&now<h17.getTime();
-
-  // Palier
-  const palierColors={0:{color:'var(--gray-vivid)',bg:'linear-gradient(135deg,#F3F4F6,#E5E7EB)'},60:{color:'var(--amber-text)',bg:'linear-gradient(135deg,#FFEDD5,#FED7AA)'},70:{color:'var(--teal-vivid)',bg:'linear-gradient(135deg,#CCFBF1,#99F6E4)'},80:{color:'var(--amber-vivid)',bg:'linear-gradient(135deg,#FEF3C7,#FDE68A)'},100:{color:'#7C3AED',bg:'linear-gradient(135deg,#EDE9FE,#DDD6FE)'}};
-  const pColor=palierColors[currentPalier.minConfirm]||palierColors[0];
-  const palierMsg=!deliveryOk?`Livraison à ${tauxLiv}% — 80% minimum pour les bonus.`
-    :nextPalier?`${tauxConfirm}% confirmées — objectif ${nextPalier.minConfirm}% pour ${nextPalier.label} à ${nextPalier.rate.toLocaleString()}F !`
-    :`${tauxConfirm}% de confirmation ! Performance ${currentPalier.minConfirm===100?'parfaite':'excellente'} !`;
-  const palier=!deliveryOk
-    ?{label:'Bloqué',emoji:'🔒',rate:currentPalier.rate,color:'var(--red-vivid)',bg:'linear-gradient(135deg,#FEE2E2,#FECACA)',msg:palierMsg}
-    :{label:currentPalier.label,emoji:currentPalier.emoji,rate:currentPalier.rate,color:pColor.color,bg:pColor.bg,msg:palierMsg};
-
-  const prevLabel=period==='today'?'hier':period==='yesterday'?'jour précédent':period==='7d'?'7 jours préc.':'période préc.';
+  const gc=(s)=>getStatusColor(s,config);
 
   return(
     <div className="page">
-      {/* Header + period selector */}
-      <div style={{position:'sticky',top:0,zIndex:40,background:'var(--bg)',borderBottom:'1px solid var(--border)'}}>
-        <div style={{padding:'14px 16px 8px'}}>
-          <h1 style={{fontSize:22,fontWeight:700,letterSpacing:-0.5}}>Rapport</h1>
-          <span style={{fontSize:12,color:'var(--muted)'}}>{periodRange.label}</span>
-        </div>
-        <div style={{display:'flex',gap:6,padding:'0 16px 10px',overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
-          {[
-            {k:'today',l:"Aujourd'hui"},
-            {k:'yesterday',l:'Hier'},
-            {k:'7d',l:'7 jours'},
-            {k:'30d',l:'30 jours'},
-            {k:'all',l:'Tout'},
-          ].map(p=>(
-            <button key={p.k} onClick={()=>setPeriod(p.k)} style={{
-              whiteSpace:'nowrap',padding:'7px 14px',borderRadius:24,fontSize:12.5,fontWeight:period===p.k?700:500,
-              background:period===p.k?'var(--dark)':'#fff',color:period===p.k?'#fff':'var(--text)',
-              border:period===p.k?'none':'1.5px solid var(--border)',flexShrink:0
-            }}>{p.l}</button>
-          ))}
-        </div>
+      <div style={{position:'sticky',top:0,zIndex:40,background:'var(--bg)',padding:'14px 16px 10px',borderBottom:'1px solid var(--border)'}}>
+        <h1 style={{fontSize:22,fontWeight:700,letterSpacing:-0.5}}>Rapport</h1>
       </div>
 
-      {/* Section 1 — Résumé compteurs */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,padding:'12px 12px 4px'}}>
+      {/* Period selector */}
+      <div style={{padding:'8px 16px'}}>
+        <select className="select" value={period} onChange={e=>setPeriod(e.target.value)} style={{fontSize:14,fontWeight:600,padding:10}}>
+          <option value="today">Aujourd'hui</option>
+          <option value="yesterday">Hier</option>
+          <option value="3d">3 derniers jours</option>
+          <option value="7d">7 derniers jours</option>
+          <option value="30d">30 derniers jours</option>
+          <option value="6m">6 derniers mois</option>
+          <option value="1y">1 an</option>
+          <option value="max">Maximum</option>
+          <option value="custom">Personnalisé...</option>
+        </select>
+        {period==='custom'&&(
+          <div style={{display:'flex',gap:8,marginTop:8}}>
+            <input type="date" className="input" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{flex:1,fontSize:13}}/>
+            <input type="date" className="input" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{flex:1,fontSize:13}}/>
+          </div>
+        )}
+        <div style={{fontSize:11,color:'var(--muted)',marginTop:4}}>{periodRange.label}</div>
+      </div>
+
+      {/* RÉSUMÉ */}
+      <div style={{margin:'4px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+        <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Résumé</div>
         {[
-          {n:pRecues.length,l:'Reçues',c:'var(--dark)'},
-          {n:pAppeles.length,l:'Appelées',c:'var(--blue-vivid)'},
-          {n:pConfirmes.length,l:'Confirmées',c:'var(--teal-vivid)'},
-          {n:pLivres.length,l:'Livrées',c:'var(--green-vivid)'},
-          {n:pInjo.length,l:'Injoignables',c:'var(--red-vivid)'},
-          {n:pReporte.length+pAnnule.length,l:'Report. / Annul.',c:'var(--amber-vivid)'},
-        ].map((s,i)=>(
-          <div key={i} style={{background:'#fff',borderRadius:12,padding:'12px 8px',textAlign:'center',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-            <div style={{fontSize:26,fontWeight:800,color:s.c,letterSpacing:-1,lineHeight:1}}>{s.n}</div>
-            <div style={{fontSize:10.5,color:'var(--muted)',marginTop:4,fontWeight:500}}>{s.l}</div>
+          {l:'Commandes reçues',v:recues.length,c:'var(--text)'},
+          {l:'Appelées',v:appelees.length,c:'var(--text)',pct:totalCmd>0?Math.round(appelees.length/totalCmd*100)+'%':null},
+          {l:'Confirmées (Livr. en cours)',v:confirmees.length,c:gc(S.LIVRAISON),pct:tauxConfirm+'%'},
+          {l:'Livrées',v:livrees.length,c:gc(S.LIVRE),pct:tauxConversion+'%'},
+          {l:'En discussion WhatsApp',v:enDiscussion.length,c:gc(S.DISCUSSION)},
+          {l:'Injoignables',v:injo.length,c:gc(S.INJOIGNABLE)},
+          {l:'Rappelés',v:rappeles.length,c:gc(S.RAPPELE)},
+          {l:'Reportées',v:reportees.length,c:gc(S.REPORTE)},
+          {l:'Annulées',v:annulees.length,c:gc(S.ANNULE)},
+        ].map((r,i)=>(
+          <div key={i} style={{display:'flex',alignItems:'center',padding:'5px 0',borderBottom:i<8?'1px solid #f5f5f0':'none'}}>
+            <div style={{width:8,height:8,borderRadius:4,background:r.c,marginRight:10,flexShrink:0}}/>
+            <span style={{fontSize:13,flex:1}}>{r.l}</span>
+            <span style={{fontSize:14,fontWeight:700,color:r.c}}>{r.v}</span>
+            {r.pct&&<span style={{fontSize:11,color:'var(--muted)',marginLeft:6,minWidth:32,textAlign:'right'}}>{r.pct}</span>}
           </div>
         ))}
       </div>
 
-      {/* Section 2 — Alerte 17h (only shows for today) */}
-      {period==='today'&&show17hAlert&&(
-        <div style={{margin:'8px 12px',padding:'14px',borderRadius:12,background:'var(--red-bg)',border:'1.5px solid #FECACA'}}>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-            <div style={{width:22,height:22,color:'var(--red-vivid)',flexShrink:0}}><I.alert/></div>
-            <div style={{fontSize:15,fontWeight:700,color:'var(--red-text)'}}>{nonAppelesToday.length} client{nonAppelesToday.length>1?'s':''} non appelé{nonAppelesToday.length>1?'s':''}</div>
-          </div>
-          <div style={{fontSize:12,color:'var(--red-text)',lineHeight:1.5}}>
-            Il est plus de 17h. Vous auriez pu joindre ces {nonAppelesToday.length} client{nonAppelesToday.length>1?'s':''} aujourd'hui. L'objectif est de terminer chaque journée à 0 client en attente.
-          </div>
-          <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
-            {nonAppelesToday.filter(o=>o.status===S.NEW).length>0&&(
-              <span style={{padding:'3px 10px',borderRadius:8,background:'rgba(255,255,255,0.6)',fontSize:11,fontWeight:600,color:'var(--blue-text)'}}>
-                {nonAppelesToday.filter(o=>o.status===S.NEW).length} nouvelle{nonAppelesToday.filter(o=>o.status===S.NEW).length>1?'s':''}
-              </span>
-            )}
-            {nonAppelesToday.filter(o=>o.status===S.INJOIGNABLE).length>0&&(
-              <span style={{padding:'3px 10px',borderRadius:8,background:'rgba(255,255,255,0.6)',fontSize:11,fontWeight:600,color:'var(--red-text)'}}>
-                {nonAppelesToday.filter(o=>o.status===S.INJOIGNABLE).length} injoignable{nonAppelesToday.filter(o=>o.status===S.INJOIGNABLE).length>1?'s':''}
-              </span>
-            )}
-            {nonAppelesToday.filter(o=>[S.RAPPELE,S.REPORTE].includes(o.status)).length>0&&(
-              <span style={{padding:'3px 10px',borderRadius:8,background:'rgba(255,255,255,0.6)',fontSize:11,fontWeight:600,color:'var(--pink-text)'}}>
-                {nonAppelesToday.filter(o=>[S.RAPPELE,S.REPORTE].includes(o.status)).length} rappel{nonAppelesToday.filter(o=>[S.RAPPELE,S.REPORTE].includes(o.status)).length>1?'s':''} en retard
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-      {period==='today'&&showPreAlert&&(
-        <div style={{margin:'8px 12px',padding:'12px 14px',borderRadius:12,background:'var(--amber-bg)',border:'1.5px solid #FDE68A',display:'flex',alignItems:'center',gap:10}}>
-          <div style={{width:22,height:22,color:'var(--amber-vivid)',flexShrink:0}}><I.clock/></div>
-          <div>
-            <div style={{fontSize:14,fontWeight:700,color:'var(--amber-text)'}}>{nonAppelesToday.length} client{nonAppelesToday.length>1?'s':''} à appeler avant 17h</div>
-          </div>
-        </div>
-      )}
-
-      {/* Section 3 — Performance */}
-      <div style={{margin:'8px 12px',borderRadius:14,overflow:'hidden'}}>
-        {/* Salary banner */}
-        <div style={{background:'linear-gradient(135deg,#111,#2a2a2a)',padding:'16px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <div>
-            <div style={{fontSize:11,color:'#888',fontWeight:500}}>Salaire ({periodRange.label.toLowerCase()})</div>
-            <div style={{fontSize:28,fontWeight:800,color:'#fff',letterSpacing:-1,marginTop:2}}>{pSalary.toLocaleString()} F</div>
-          </div>
-          <div style={{fontSize:11,color:'#666',textAlign:'right'}}>
-            <div>{pLivres.length} livrée{pLivres.length>1?'s':''} × {salaryRate.toLocaleString()}F</div>
-            <div style={{color:deliveryOk?'#4ade80':'#f87171',marginTop:2}}>Livraison : {tauxLiv}%{deliveryOk?' ✓':' (min 80%)'}</div>
-          </div>
-        </div>
-
-        {/* Gauges */}
-        <div style={{background:'#fff',padding:14,display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-          {/* Taux confirmation */}
-          <div style={{textAlign:'center'}}>
-            <div style={{position:'relative',width:80,height:80,margin:'0 auto 6px'}}>
-              <svg viewBox="0 0 36 36" style={{transform:'rotate(-90deg)',width:80,height:80}}>
-                <path d="M18 2.0845a15.9155 15.9155 0 0 1 0 31.831 15.9155 15.9155 0 0 1 0-31.831" fill="none" stroke="#E8E8E3" strokeWidth="3"/>
-                <path d="M18 2.0845a15.9155 15.9155 0 0 1 0 31.831 15.9155 15.9155 0 0 1 0-31.831" fill="none" stroke={tauxConfirm>=60?'#0D9488':'#DC2626'} strokeWidth="3" strokeDasharray={`${tauxConfirm}, 100`} strokeLinecap="round"/>
-              </svg>
-              <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,fontWeight:800,color:'var(--text)'}}>{tauxConfirm}%</div>
-            </div>
-            <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Confirmation</div>
-            <div style={{fontSize:10,color:'var(--muted)',marginTop:1}}>{pConfirmes.length}/{pAppeles.length} appelées</div>
-            {diffConfirm!==null&&(
-              <div style={{fontSize:11,fontWeight:700,marginTop:3,color:diffConfirm>0?'var(--green-vivid)':diffConfirm<0?'var(--red-vivid)':'var(--muted)'}}>
-                {diffConfirm>0?'↑':diffConfirm<0?'↓':'→'} {diffConfirm>0?'+':''}{diffConfirm}% vs {prevLabel}
-              </div>
-            )}
-          </div>
-          {/* Taux livraison */}
-          <div style={{textAlign:'center'}}>
-            <div style={{position:'relative',width:80,height:80,margin:'0 auto 6px'}}>
-              <svg viewBox="0 0 36 36" style={{transform:'rotate(-90deg)',width:80,height:80}}>
-                <path d="M18 2.0845a15.9155 15.9155 0 0 1 0 31.831 15.9155 15.9155 0 0 1 0-31.831" fill="none" stroke="#E8E8E3" strokeWidth="3"/>
-                <path d="M18 2.0845a15.9155 15.9155 0 0 1 0 31.831 15.9155 15.9155 0 0 1 0-31.831" fill="none" stroke={tauxLiv>=80?'#16A34A':tauxLiv>=60?'#D97706':'#DC2626'} strokeWidth="3" strokeDasharray={`${tauxLiv}, 100`} strokeLinecap="round"/>
-              </svg>
-              <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,fontWeight:800,color:'var(--text)'}}>{tauxLiv}%</div>
-            </div>
-            <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Livraison globale</div>
-            <div style={{fontSize:10,color:'var(--muted)',marginTop:1}}>{pLivres.length}/{pConfirmedAll.length} confirmées</div>
-            <div style={{fontSize:11,fontWeight:700,marginTop:3,color:deliveryOk?'var(--green-vivid)':'var(--red-vivid)'}}>
-              {deliveryOk?'✓ Bonus débloqué':'✗ Min 80% requis'}
-            </div>
-          </div>
-        </div>
-
-        {/* Palier */}
-        <div style={{background:palier.bg,padding:'14px 16px',display:'flex',alignItems:'center',gap:12}}>
-          <span style={{fontSize:32,lineHeight:1}}>{palier.emoji}</span>
-          <div style={{flex:1}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontSize:15,fontWeight:700,color:palier.color}}>Palier {palier.label}</span>
-              <span style={{fontSize:14,fontWeight:800,color:palier.color}}>{palier.rate.toLocaleString()}F / livr.</span>
-            </div>
-            <div style={{fontSize:12,color:palier.color,opacity:0.8,marginTop:2}}>{palier.msg}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Section 4 — Finances */}
-      <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,overflow:'hidden',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-        <div style={{padding:'14px 14px 8px'}}>
-          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Finances — {periodRange.label.toLowerCase()}</div>
-
+      {/* PERFORMANCES */}
+      <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+        <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Performances</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
           {[
-            {icon:'💰',label:"Chiffre d'affaires",value:pCA,positive:true},
-            {icon:'🚚',label:'Coûts livraison',value:pDelCost,positive:false},
-            {icon:'👤',label:`Salaire (${salaryRate.toLocaleString()}F × ${pLivres.length})`,value:pSalary,positive:false},
-            {icon:'📝',label:'Dépenses',value:pExpTotal,positive:false},
+            {l:'Taux confirmation',v:tauxConfirm+'%',sub:confirmees.length+'/'+totalCmd,ok:tauxConfirm>=50},
+            {l:'Taux livraison',v:tauxLiv+'%',sub:livrees.length+'/'+confirmees.length,ok:tauxLiv>=80},
+            {l:'Taux conversion',v:tauxConversion+'%',sub:livrees.length+'/'+totalCmd,ok:tauxConversion>=30},
+            {l:'Taux réponse',v:tauxReponse+'%',sub:(appelees.length-injo.length)+'/'+appelees.length,ok:tauxReponse>=70},
+            {l:'Panier moyen',v:panierMoyen.toLocaleString()+' F',sub:livrees.length+' livraisons',ok:true},
+            {l:'Temps 1er contact',v:tempsContact<60?tempsContact+' min':Math.floor(tempsContact/60)+'h'+String(tempsContact%60).padStart(2,'0'),sub:'moyenne',ok:tempsContact<60},
           ].map((r,i)=>(
-            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid #f5f5f0'}}>
-              <div style={{display:'flex',alignItems:'center',gap:8}}>
-                <div style={{width:32,height:32,borderRadius:10,background:r.positive?'var(--green-bg)':'#F9F9F6',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15}}>{r.icon}</div>
-                <span style={{fontSize:13,fontWeight:500}}>{r.label}</span>
-              </div>
-              <span style={{fontSize:15,fontWeight:700,color:r.positive?'var(--green-vivid)':'var(--red-vivid)'}}>{r.positive?'+':'-'}{r.value.toLocaleString()} F</span>
+            <div key={i} style={{padding:10,background:'#f9f9f6',borderRadius:10}}>
+              <div style={{fontSize:10,color:'var(--muted)',marginBottom:2}}>{r.l}</div>
+              <div style={{fontSize:20,fontWeight:800,color:r.ok?'var(--green-vivid)':'var(--red-vivid)'}}>{r.v}</div>
+              <div style={{fontSize:10,color:'var(--muted)'}}>{r.sub}</div>
             </div>
           ))}
         </div>
-        <div style={{padding:'14px',background:toVerse>=0?'var(--green-bg)':'var(--red-bg)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <span style={{fontSize:14,fontWeight:700,color:toVerse>=0?'var(--green-text)':'var(--red-text)'}}>À verser</span>
-          <span style={{fontSize:22,fontWeight:800,color:toVerse>=0?'var(--green-vivid)':'var(--red-vivid)',letterSpacing:-0.5}}>{toVerse.toLocaleString()} F</span>
-        </div>
       </div>
 
-      {/* Section 5 — Dépenses (only for today) */}
-      {period==='today'&&(
+      {/* PAR PRODUIT */}
+      {parProduit.length>0&&(
         <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-            <span style={{fontSize:15,fontWeight:700}}>Dépenses du jour</span>
-            <button onClick={()=>setShowExpForm(!showExpForm)} style={{padding:'6px 12px',borderRadius:10,background:'var(--dark)',color:'#fff',fontSize:12,fontWeight:600,display:'flex',alignItems:'center',gap:4}}>
-              <div style={{width:14,height:14}}>{showExpForm?<I.x/>:<I.plus/>}</div>{showExpForm?'Fermer':'Ajouter'}
-            </button>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Par produit</div>
+          {parProduit.map(([name,d],i)=>(
+            <div key={i} style={{padding:'8px 0',borderBottom:i<parProduit.length-1?'1px solid #f5f5f0':'none'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:13,fontWeight:600}}>{name}</span>
+                <span style={{fontSize:12,color:'var(--muted)'}}>{d.total} cmd</span>
+              </div>
+              <div style={{display:'flex',gap:12,marginTop:4,fontSize:11,color:'var(--muted)'}}>
+                <span style={{color:gc(S.LIVRAISON)}}>{d.confirmees} conf.</span>
+                <span style={{color:gc(S.LIVRE)}}>{d.livrees} livrées</span>
+                <span>{d.ca.toLocaleString()} F</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* FINANCES */}
+      <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+        <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Finances — {periodRange.label}</div>
+        {[
+          {l:'Chiffre d\'affaires',v:pCA,c:'var(--green-vivid)',sign:'+'},
+          {l:'Frais de livraison',v:pDelCost,c:'var(--red-vivid)',sign:'-'},
+          {l:'Salaire closeuse ('+salaryRate.toLocaleString()+'F × '+livrees.length+')',v:pSalary,c:'var(--red-vivid)',sign:'-'},
+          {l:'Dépenses',v:pExpTotal,c:'var(--red-vivid)',sign:'-'},
+        ].map((r,i)=>(
+          <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f5f5f0'}}>
+            <span style={{fontSize:13}}>{r.l}</span>
+            <span style={{fontSize:13,fontWeight:600,color:r.c}}>{r.sign}{r.v.toLocaleString()} F</span>
           </div>
-          {showExpForm&&(
-            <div style={{display:'flex',gap:8,marginBottom:12}}>
-              <input className="input" placeholder="Libellé (sachet, crédit...)" value={expLabel} onChange={e=>setExpLabel(e.target.value)} style={{flex:2}}/>
-              <input className="input" type="number" placeholder="F" value={expAmount} onChange={e=>setExpAmount(e.target.value)} style={{flex:1}}/>
-              <button onClick={()=>{
-                if(expLabel&&expAmount){addExpense({label:expLabel,amount:Number(expAmount)});setExpLabel('');setExpAmount('');setShowExpForm(false)}
-                else alert('Remplis le libellé et le montant')
-              }} style={{padding:'0 14px',borderRadius:10,background:'var(--green-vivid)',color:'#fff',fontWeight:700,fontSize:16}}>
-                <div style={{width:18,height:18}}><I.check/></div>
-              </button>
-            </div>
-          )}
-          {pExpenses.length===0&&!showExpForm&&(
-            <div style={{padding:'16px 0',textAlign:'center',color:'var(--muted)',fontSize:13}}>Aucune dépense aujourd'hui</div>
-          )}
-          {pExpenses.map(e=>(
-            <div key={e.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid #f5f5f0'}}>
-              <div>
-                <div style={{fontSize:13,fontWeight:500}}>{e.label}</div>
-                <div style={{fontSize:10,color:'var(--muted)'}}>{new Date(e.date).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'})}</div>
-              </div>
-              <div style={{display:'flex',alignItems:'center',gap:8}}>
-                <span style={{fontSize:14,fontWeight:700}}>{e.amount.toLocaleString()} F</span>
-                <button onClick={()=>removeExpense(e.id)} style={{width:24,height:24,borderRadius:6,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>
-                  <div style={{width:12,height:12}}><I.x/></div>
-                </button>
-              </div>
-            </div>
-          ))}
+        ))}
+        <div style={{display:'flex',justifyContent:'space-between',padding:'10px 0 4px',marginTop:4}}>
+          <span style={{fontSize:15,fontWeight:800}}>À verser</span>
+          <span style={{fontSize:18,fontWeight:800,color:toVerse>=0?'var(--green-vivid)':'var(--red-vivid)'}}>{toVerse.toLocaleString()} F</span>
         </div>
-      )}
-
-      {/* Section 6 — Livraisons récentes avec dates */}
-      {pLivres.length>0&&(
-        <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-          <div style={{fontSize:15,fontWeight:700,marginBottom:10}}>Livraisons ({periodRange.label.toLowerCase()})</div>
-          {pLivres.slice(0,10).map((o,i)=>{
-            const delDate=o.deliveredAt||o.attempts.find(a=>a.status===S.LIVRE)?.ts;
-            return(
-              <div key={o.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:i<Math.min(pLivres.length,10)-1?'1px solid #f5f5f0':'none'}}>
-                <div>
-                  <div style={{fontSize:13,fontWeight:600}}>{o.orderNumber} — {o.fullName}</div>
-                  <div style={{fontSize:11,color:'var(--muted)'}}>{o.productName} × {o.quantity}</div>
-                </div>
-                <div style={{textAlign:'right'}}>
-                  <div style={{fontSize:13,fontWeight:700,color:'var(--green-vivid)'}}>{(o.pricePaid||o.totalPrice).toLocaleString()} F</div>
-                  {delDate&&<div style={{fontSize:10,color:'var(--muted)'}}>{new Date(delDate).toLocaleDateString('fr',{day:'2-digit',month:'short'})} à {new Date(delDate).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'})}</div>}
-                </div>
-              </div>
-            );
-          })}
-          {pLivres.length>10&&<div style={{fontSize:12,color:'var(--muted)',textAlign:'center',paddingTop:8}}>+ {pLivres.length-10} autres</div>}
-        </div>
-      )}
-
-      {/* Section 7 — Stock */}
-      <div style={{margin:'8px 12px 20px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
-        <div style={{fontSize:15,fontWeight:700,marginBottom:10}}>Stock restant</div>
-        {config.products.map((p,i)=>{
-          const delivered=orders.filter(o=>o.status===S.LIVRE).filter(o=>{
-            return o.productId===p.id||norm(o.productName||'')===norm(p.name);
-          }).reduce((s,o)=>s+o.quantity,0);
-          const remaining=p.stock-delivered;
-          const pct=p.stock>0?remaining/p.stock*100:0;
-          const color=remaining<=5?'var(--red-vivid)':remaining<=15?'var(--amber-vivid)':'var(--green-vivid)';
-          return(
-            <div key={p.id||i} style={{padding:'10px 0',borderBottom:i<config.products.length-1?'1px solid #f5f5f0':'none'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-                <span style={{fontSize:13,fontWeight:600}}>{p.name}</span>
-                <div style={{display:'flex',alignItems:'baseline',gap:4}}>
-                  <span style={{fontSize:22,fontWeight:800,color,letterSpacing:-1}}>{remaining}</span>
-                  <span style={{fontSize:11,color:'var(--muted)'}}>/ {p.stock}</span>
-                </div>
-              </div>
-              <div style={{height:6,background:'#F3F3EE',borderRadius:3,overflow:'hidden'}}>
-                <div style={{height:'100%',width:`${Math.max(0,pct)}%`,background:color,borderRadius:3,transition:'width .3s'}}/>
-              </div>
-              {remaining<=5&&<div style={{fontSize:11,fontWeight:600,color:'var(--red-vivid)',marginTop:4}}>⚠ Stock critique</div>}
-            </div>
-          );
-        })}
       </div>
+
+      {/* DÉPENSES */}
+      <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+          <div style={{fontSize:14,fontWeight:700}}>Dépenses</div>
+          <button onClick={()=>setShowExpForm(!showExpForm)} style={{padding:'4px 12px',borderRadius:8,background:'var(--dark)',color:'#fff',fontSize:11,fontWeight:600}}>+ Ajouter</button>
+        </div>
+        {showExpForm&&(
+          <div style={{display:'flex',gap:6,marginBottom:10}}>
+            <input className="input" placeholder="Libellé" value={expLabel} onChange={e=>setExpLabel(e.target.value)} style={{flex:2,fontSize:12}}/>
+            <input className="input" type="number" placeholder="Montant" value={expAmount} onChange={e=>setExpAmount(e.target.value)} style={{flex:1,fontSize:12}}/>
+            <button onClick={()=>{
+              if(expLabel&&expAmount){addExpense({label:expLabel,amount:Number(expAmount)});setExpLabel('');setExpAmount('');setShowExpForm(false)}
+            }} style={{padding:'0 12px',borderRadius:8,background:'var(--green-vivid)',color:'#fff',fontWeight:700}}>OK</button>
+          </div>
+        )}
+        {pExpenses.length===0&&<div style={{fontSize:12,color:'var(--muted)',textAlign:'center',padding:8}}>Aucune dépense</div>}
+        {pExpenses.map((e,i)=>(
+          <div key={e.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<pExpenses.length-1?'1px solid #f5f5f0':'none'}}>
+            <div>
+              <span style={{fontSize:13}}>{e.label}</span>
+              <span style={{fontSize:11,color:'var(--muted)',marginLeft:6}}>{fmtDate(e.date)}</span>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <span style={{fontSize:13,fontWeight:600}}>{e.amount.toLocaleString()} F</span>
+              <button onClick={()=>removeExpense(e.id)} style={{width:20,height:20,borderRadius:6,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,padding:0}}>×</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{height:90}}/>
     </div>
   );
 }
+
 // ============== SHEET SYNC ==============
 function SheetSync({sheetUrl,sheetLabel,onClose}){
   const {importOrder,clearAllOrders,syncFromSheet,orders,config,setConfig}=useContext(Ctx);
@@ -1789,7 +1722,8 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
     if(t.includes('livre'))return S.LIVRE;
     if(t.includes('injoignable'))return S.INJOIGNABLE;
     if(t.includes('rappel'))return S.RAPPELE;
-    if(t.includes('report'))return S.REPORTE;
+    if(t.includes('discussion'))return S.DISCUSSION;
+  if(t.includes('report'))return S.REPORTE;
     if(t.includes('annul'))return S.ANNULE;
     return S.NEW;
   };
@@ -2383,6 +2317,11 @@ function ConfigPage({isManager}){
         <div style={{marginTop:10}}>
           <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Tentatives max avant abandon</label>
           <input className="input" type="number" min="1" max="10" value={config.maxAttempts} onChange={e=>upd('maxAttempts',Number(e.target.value))} style={{marginTop:4}}/>
+        </div>
+        <div style={{marginTop:10}}>
+          <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Alerte temps de réaction (minutes)</label>
+          <input className="input" type="number" min="5" max="120" step="5" value={config.alerteReaction||30} onChange={e=>upd('alerteReaction',Number(e.target.value))} style={{marginTop:4}}/>
+          <div style={{fontSize:10,color:'var(--muted)',marginTop:2}}>Alerte si une commande Nouvelle n'est pas contactée après ce délai</div>
         </div>
       </div>
 

@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v4.2';
+var APP_VERSION='v4.5';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   localStorage.removeItem('cp_user');
@@ -881,10 +881,10 @@ function OrderDetail({order,onClose}){
 
   const save=()=>{
     if(!status){alert('Sélectionne un statut');return}
-    // Force product selection for confirmation/delivery
-    if([S.LIVRAISON,S.LIVRE].includes(status)&&(config.products||[]).length>0&&!order.productId){alert('Sélectionne un produit avant de confirmer');return}
-    // Force zone for delivery
-    if(status===S.LIVRAISON&&(config.zones||[]).length>0&&!zone&&!order.deliveryZone){alert('Sélectionne une zone de livraison');return}
+    // Force product selection before any status change
+    if((config.products||[]).length>0&&!order.productId){alert('Sélectionne le produit avant d\'enregistrer');return}
+    // Force zone before any status change
+    if((config.zones||[]).length>0&&!zone&&!order.deliveryZone){alert('Sélectionne la zone de livraison avant d\'enregistrer');return}
     hasActed.current=true;
     if(!comment.trim()&&[S.RAPPELE,S.REPORTE].includes(status)){alert('Commentaire obligatoire pour ce statut');return}
     const u={status,comment:comment||order.comment};
@@ -1557,9 +1557,14 @@ function ReportPage(){
   // Confirmées = statut passé à Livraison en cours dans la période
   const confirmees=orders.filter(o=>o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRAISON));
   
-  // Livrées = statut passé à Livré dans la période
+  // Livrées = commandes Livré dont la confirmation (Livraison en cours) était dans la période
   const livrees=orders.filter(o=>{
-    if(o.deliveredAt&&inRange(o.deliveredAt))return true;
+    if(o.status!==S.LIVRE)return false;
+    // Date de référence = quand la commande a été confirmée (Livraison en cours)
+    const confAttempt=o.attempts.find(a=>a.status===S.LIVRAISON);
+    if(confAttempt)return inRange(confAttempt.ts);
+    // Fallback: date de livraison
+    if(o.deliveredAt)return inRange(o.deliveredAt);
     return o.attempts.some(a=>inRange(a.ts)&&a.status===S.LIVRE);
   });
   
@@ -1782,14 +1787,13 @@ function ReportPage(){
           }} style={{padding:'4px 12px',borderRadius:8,background:'var(--green-vivid)',color:'#fff',fontSize:11,fontWeight:600}}>+ Versement</button>
         </div>
         {(()=>{
-          const pVers=versements.filter(v=>inRange(v.date));
-          const totalVerse=pVers.reduce((s,v)=>v.amount+s,0);
-          const resteAVerser=toVerse-totalVerse;
+          const totalVerseGlobal=versements.reduce((s,v)=>v.amount+s,0);
+          const resteAVerser=toVerse-totalVerseGlobal;
           return(
             <>
-              {pVers.length===0&&<div style={{fontSize:12,color:'var(--muted)',textAlign:'center',padding:8}}>Aucun versement</div>}
-              {pVers.map((v,i)=>(
-                <div key={v.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<pVers.length-1?'1px solid #f5f5f0':'none'}}>
+              {versements.length===0&&<div style={{fontSize:12,color:'var(--muted)',textAlign:'center',padding:8}}>Aucun versement</div>}
+              {versements.map((v,i)=>(
+                <div key={v.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<versements.length-1?'1px solid #f5f5f0':'none'}}>
                   <div>
                     <span style={{fontSize:13,fontWeight:600,color:'var(--green-vivid)'}}>{v.amount.toLocaleString()} F</span>
                     {v.note&&<span style={{fontSize:11,color:'var(--muted)',marginLeft:6}}>{v.note}</span>}
@@ -1801,7 +1805,7 @@ function ReportPage(){
               <div style={{marginTop:10,padding:'10px 0',borderTop:'2px solid var(--border)'}}>
                 <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
                   <span style={{fontSize:13}}>Total versé</span>
-                  <span style={{fontSize:13,fontWeight:700,color:'var(--green-vivid)'}}>{totalVerse.toLocaleString()} F</span>
+                  <span style={{fontSize:13,fontWeight:700,color:'var(--green-vivid)'}}>{totalVerseGlobal.toLocaleString()} F</span>
                 </div>
                 <div style={{display:'flex',justifyContent:'space-between'}}>
                   <span style={{fontSize:15,fontWeight:800}}>Reste à verser</span>
@@ -2337,13 +2341,12 @@ function ConfigPage({isManager}){
           )}
 
           {config.products.map((p,i)=>{
-            // Calculate used stock from orders (all non-cancelled orders consume stock)
-            const cancelledStatuses=[S.ANNULE,S.ECHEC,S.ABANDONNE];
-            const used=orders.filter(o=>{
-              const match=o.productId===p.id||norm(o.productName||'')===norm(p.name);
-              return match&&!cancelledStatuses.includes(o.status);
-            }).reduce((s,o)=>s+(o.quantity||1),0);
-            const remaining=Math.max(0,(p.stock||0)-used);
+            // Stock: only confirmed (Livraison en cours) + delivered (Livré) consume stock
+            const match=o=>o.productId===p.id||norm(o.productName||'')===norm(p.name);
+            const livrees=orders.filter(o=>match(o)&&o.status===S.LIVRE).reduce((s,o)=>s+(o.quantity||1),0);
+            const enCours=orders.filter(o=>match(o)&&o.status===S.LIVRAISON).reduce((s,o)=>s+(o.quantity||1),0);
+            const vendues=livrees+enCours;
+            const remaining=Math.max(0,(p.stock||0)-vendues);
             const lowStock=remaining<=5&&remaining>0;
             const noStock=remaining===0&&(p.stock||0)>0;
             return(
@@ -2361,15 +2364,16 @@ function ConfigPage({isManager}){
                   </div>
                   <div style={{textAlign:'center',minWidth:50}}>
                     <span style={{fontSize:11,color:'var(--muted)'}}>Restant</span>
-                    <input type="number" min="0" value={typeof p.stockRemaining==='number'?p.stockRemaining:remaining} onChange={e=>{const prods=[...config.products];prods[i]={...prods[i],stockRemaining:Number(e.target.value)||0,stock:Math.max(prods[i].stock||0,used+Number(e.target.value))};upd('products',prods)}}
-                      style={{width:50,padding:'4px',borderRadius:8,border:'1.5px solid '+(noStock?'var(--red-vivid)':lowStock?'var(--amber-vivid)':'var(--green-vivid)'),fontSize:16,fontWeight:800,textAlign:'center',fontFamily:'inherit',outline:'none',display:'block',marginTop:2,color:noStock?'var(--red-vivid)':lowStock?'var(--amber-vivid)':'var(--green-vivid)'}}/>
+                    <div style={{fontSize:20,fontWeight:800,color:noStock?'var(--red-vivid)':lowStock?'var(--amber-vivid)':'var(--green-vivid)',marginTop:2}}>
+                      {remaining}
+                    </div>
                   </div>
                   <button onClick={()=>{if(confirm('Supprimer '+p.name+' ?'))upd('products',config.products.filter((_,j)=>j!==i))}} style={{width:28,height:28,borderRadius:8,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>
                     <div style={{width:14,height:14}}><I.x/></div>
                   </button>
                 </div>
               </div>
-              <div style={{fontSize:11,color:'var(--muted)',marginBottom:4}}>{used} vendu{used>1?'s':''} — {remaining} restant{remaining>1?'s':''}</div>
+              <div style={{fontSize:11,color:'var(--muted)',marginBottom:4}}>{livrees} livrée{livrees>1?'s':''} — {enCours} en cours — {remaining} restant{remaining>1?'s':''}</div>
 
 
             </div>
@@ -2879,8 +2883,12 @@ function ManagerDashboard(){
   const inToday=(iso)=>iso&&new Date(iso).toDateString()===today;
   const todayAppeles=orders.filter(o=>o.attempts.some(a=>inToday(a.ts))).length;
   const todayConfirmes=orders.filter(o=>o.attempts.some(a=>inToday(a.ts)&&a.status===S.LIVRAISON)).length;
+  // Livrées = commandes Livré dont la confirmation était aujourd'hui
   const todayLivres=orders.filter(o=>{
-    if(o.deliveredAt&&inToday(o.deliveredAt))return true;
+    if(o.status!==S.LIVRE)return false;
+    const confAttempt=o.attempts.find(a=>a.status===S.LIVRAISON);
+    if(confAttempt)return inToday(confAttempt.ts);
+    if(o.deliveredAt)return inToday(o.deliveredAt);
     return o.attempts.some(a=>inToday(a.ts)&&a.status===S.LIVRE);
   }).length;
   const todayTotalConfAndLiv=Math.max(todayConfirmes,todayLivres);
@@ -2891,7 +2899,13 @@ function ManagerDashboard(){
   const salaryRate=calcSalaryRate(tauxConfirm,tauxLiv,config.salaryGrid);
 
   // Finances from actual delivered orders today
-  const livresAuj=orders.filter(o=>{if(o.deliveredAt&&inToday(o.deliveredAt))return true;return o.attempts.some(a=>inToday(a.ts)&&a.status===S.LIVRE)});
+  const livresAuj=orders.filter(o=>{
+    if(o.status!==S.LIVRE)return false;
+    const ca=o.attempts.find(a=>a.status===S.LIVRAISON);
+    if(ca)return inToday(ca.ts);
+    if(o.deliveredAt)return inToday(o.deliveredAt);
+    return o.attempts.some(a=>inToday(a.ts)&&a.status===S.LIVRE);
+  });
   const pCA=livresAuj.reduce((s,o)=>(o.pricePaid||o.totalPrice)*o.quantity+s,0);
   const pDelCost=livresAuj.reduce((s,o)=>o.deliveryCost+s,0);
   const pSalary=livresAuj.length*salaryRate;
@@ -3025,7 +3039,7 @@ function ManagerDashboard(){
                 {s:S.INJOIGNABLE,l:'Injoignables',c:gc2(S.INJOIGNABLE),n:useOrders?(counts[S.INJOIGNABLE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.INJOIGNABLE)).length},
                 {s:S.RAPPELE,l:'Rappelés',c:gc2(S.RAPPELE),n:useOrders?(counts[S.RAPPELE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.RAPPELE)).length},
                 {s:S.REPORTE,l:'Reportées',c:gc2(S.REPORTE),n:useOrders?(counts[S.REPORTE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.REPORTE)).length},
-                {s:S.LIVRE,l:'Livrées',c:gc2(S.LIVRE),n:useOrders?(counts[S.LIVRE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.LIVRE)||(o.deliveredAt&&inP(o.deliveredAt))).length},
+                {s:S.LIVRE,l:'Livrées',c:gc2(S.LIVRE),n:useOrders?(counts[S.LIVRE]||0):orders.filter(o=>{if(o.status!==S.LIVRE)return false;const ca=o.attempts.find(a=>a.status===S.LIVRAISON);if(ca)return inP(ca.ts);return o.attempts.some(a=>inP(a.ts)&&a.status===S.LIVRE)}).length},
                 {s:S.ANNULE,l:'Annulées',c:gc2(S.ANNULE),n:useOrders?(counts[S.ANNULE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.ANNULE)).length},
               ];
               const totalP=items.reduce((s,r)=>s+r.n,0)||1;
@@ -3154,17 +3168,20 @@ function ManagerDashboard(){
           <div style={{background:'#fff',borderRadius:14,padding:14,marginTop:8,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
             <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Stock</div>
             {config.products.map((p,i)=>{
-              const delivered=orders.filter(o=>o.status===S.LIVRE).filter(o=>{
-                return o.productId===p.id||norm(o.productName||'')===norm(p.name);
-              }).reduce((s,o)=>s+o.quantity,0);
-              const remaining=p.stock-delivered;
+              const matchP=o=>o.productId===p.id||norm(o.productName||'')===norm(p.name);
+              const livrees=orders.filter(o=>o.status===S.LIVRE&&matchP(o)).reduce((s,o)=>s+(o.quantity||1),0);
+              const enCours=orders.filter(o=>o.status===S.LIVRAISON&&matchP(o)).reduce((s,o)=>s+(o.quantity||1),0);
+              const remaining=Math.max(0,(p.stock||0)-livrees-enCours);
               const color=remaining<=5?'var(--red-vivid)':remaining<=15?'var(--amber-vivid)':'var(--green-vivid)';
               return(
                 <div key={p.id||i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<config.products.length-1?'1px solid #f5f5f0':'none'}}>
-                  <span style={{fontSize:13}}>{p.name}</span>
+                  <div>
+                    <span style={{fontSize:13,fontWeight:600}}>{p.name}</span>
+                    <div style={{fontSize:10,color:'var(--muted)'}}>{livrees} livrées — {enCours} en cours</div>
+                  </div>
                   <div style={{display:'flex',alignItems:'baseline',gap:4}}>
                     <span style={{fontSize:20,fontWeight:800,color}}>{remaining}</span>
-                    <span style={{fontSize:11,color:'var(--muted)'}}>/ {p.stock}</span>
+                    <span style={{fontSize:11,color:'var(--muted)'}}>/ {p.stock||0}</span>
                   </div>
                 </div>
               );

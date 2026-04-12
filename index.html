@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v4.1';
+var APP_VERSION='v4.2';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   localStorage.removeItem('cp_user');
@@ -233,7 +233,7 @@ function loadConfig(){
       'Livré':'#22C55E','Échec livraison':'#EF4444','Abandonné':'#6B7280'
     },
     products:[],
-    salaryPerDelivery:1000,maxAttempts:3,
+    salaryPerDelivery:1000,maxAttempts:3,totalVerse:0,
     timerInjo:2,timerRappel:1,alerteReaction:30,
     whatsappPhone:'',whatsappApiKey:'',
     dailyReportHour:20,
@@ -284,6 +284,7 @@ function ordersRef(code){return db?spaceRef(code).collection('orders'):null}
 function msgsRef(code){return db?spaceRef(code).collection('messages'):null}
 function expRef(code){return db?spaceRef(code).collection('expenses'):null}
 function activityRef(code){return db?spaceRef(code).collection('activity'):null}
+function versementsRef(code){return db?spaceRef(code).collection('versements'):null}
 function todayKey(){return new Date().toISOString().slice(0,10)}
 const FV=typeof firebase!=='undefined'&&firebase.firestore?firebase.firestore.FieldValue:null;
 
@@ -296,6 +297,7 @@ function Provider({children,spaceCode,isMgr}){
   const [fbReady,setFbReady]=useState(false);
   const [dailyStats,setDailyStats]=useState({});
   const [activity,setActivity]=useState([]);
+  const [versements,setVersements]=useState([]);
 
   // Reload data when spaceCode changes (manager switches closeuse)
   const prevSpace=useRef(spaceCode);
@@ -360,6 +362,11 @@ function Provider({children,spaceCode,isMgr}){
     // Activity listener (last 500 for period analysis)
     unsubs.push(activityRef(spaceCode).orderBy('ts','desc').limit(500).onSnapshot(snap=>{
       setActivity(snap.docs.map(d=>({id:d.id,...d.data()})));
+    },()=>{}));
+
+    // Versements listener
+    unsubs.push(versementsRef(spaceCode).orderBy('date','desc').onSnapshot(snap=>{
+      setVersements(snap.docs.map(d=>({id:d.id,...d.data()})));
     },()=>{}));
 
     // Config listener — Firebase is source of truth
@@ -541,6 +548,17 @@ function Provider({children,spaceCode,isMgr}){
     });
   },[spaceCode]);
 
+  const addVersement=useCallback((v)=>{
+    const vers={...v,id:gid(),date:new Date().toISOString()};
+    if(db)versementsRef(spaceCode).doc(vers.id).set(vers).catch(()=>{});
+    setVersements(prev=>[vers,...prev]);
+  },[spaceCode]);
+
+  const removeVersement=useCallback((id)=>{
+    if(db)versementsRef(spaceCode).doc(id).delete().catch(()=>{});
+    setVersements(prev=>prev.filter(v=>v.id!==id));
+  },[spaceCode]);
+
   const addExpense=useCallback((e)=>{
     const exp={...e,id:gid(),date:new Date().toISOString()};
     if(db)expRef(spaceCode).doc(exp.id).set(exp).catch(()=>{});
@@ -653,7 +671,7 @@ function Provider({children,spaceCode,isMgr}){
     return()=>unsubs.forEach(u=>u());
   },[]);
 
-  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,deleteOrders,syncFromSheet,addExpense,removeExpense,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus,dailyStats,activity}}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{orders,sorted,config,setConfig:setConfigAndSync,expenses,messages,updateOrder,addOrder,importOrder,clearAllOrders,deleteOrders,syncFromSheet,addExpense,removeExpense,versements,addVersement,removeVersement,sendMsg,reactMsg,seenMsg,replyMsg,deleteMsg,pinMsg,now,counts,stats,spaceCode,fbReady,lastSeen,spacesStatus,dailyStats,activity}}>{children}</Ctx.Provider>;
 }
 
 // ============== NOTIFICATION ENGINE ==============
@@ -863,6 +881,10 @@ function OrderDetail({order,onClose}){
 
   const save=()=>{
     if(!status){alert('Sélectionne un statut');return}
+    // Force product selection for confirmation/delivery
+    if([S.LIVRAISON,S.LIVRE].includes(status)&&(config.products||[]).length>0&&!order.productId){alert('Sélectionne un produit avant de confirmer');return}
+    // Force zone for delivery
+    if(status===S.LIVRAISON&&(config.zones||[]).length>0&&!zone&&!order.deliveryZone){alert('Sélectionne une zone de livraison');return}
     hasActed.current=true;
     if(!comment.trim()&&[S.RAPPELE,S.REPORTE].includes(status)){alert('Commentaire obligatoire pour ce statut');return}
     const u={status,comment:comment||order.comment};
@@ -878,8 +900,13 @@ function OrderDetail({order,onClose}){
   };
 
   return(
-    <div className="overlay fade-in" onClick={e=>{if(e.target===e.currentTarget)onClose()}}>
-      <div className="modal slide-up">
+    <div className="overlay fade-in" onClick={e=>{
+      if(e.target===e.currentTarget){
+        if(order.status===S.NEW&&!hasActed.current){if(!confirm('Ce client n\'a pas encore été contacté. Fermer quand même ?'))return}
+        onClose();
+      }
+    }}>
+      <div className="modal slide-up" style={{maxHeight:'90vh',overflow:'auto'}}>
         {/* Header */}
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:16}}>
           <div>
@@ -891,7 +918,7 @@ function OrderDetail({order,onClose}){
               if(!confirm('Ce client n\'a pas encore été contacté. Fermer quand même ?'))return;
             }
             onClose();
-          }} style={{background:'#f2f2ef',borderRadius:12,padding:8,display:'flex'}}><div style={{width:20,height:20}}><I.x/></div></button>
+          }} style={{background:'#f2f2ef',borderRadius:12,padding:8,display:'flex',position:'sticky',top:0,zIndex:10}}><div style={{width:20,height:20}}><I.x/></div></button>
         </div>
 
         {/* Action buttons */}
@@ -1490,7 +1517,7 @@ function OrdersPage({isMgr}){
 
 // ============== REPORT PAGE ==============
 function ReportPage(){
-  const {orders,config,expenses,addExpense,removeExpense,now,activity}=useContext(Ctx);
+  const {orders,config,expenses,addExpense,removeExpense,versements,addVersement,removeVersement,now,activity}=useContext(Ctx);
   const [showExpForm,setShowExpForm]=useState(false);
   const [expLabel,setExpLabel]=useState('');
   const [expAmount,setExpAmount]=useState('');
@@ -1740,6 +1767,50 @@ function ReportPage(){
             </div>
           </div>
         ))}
+      </div>
+
+      {/* VERSEMENTS */}
+      <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+          <div style={{fontSize:14,fontWeight:700}}>Versements effectués</div>
+          <button onClick={()=>{
+            const montant=prompt('Montant versé (F)');
+            if(montant&&Number(montant)>0){
+              const note=prompt('Note (optionnel)')||'';
+              addVersement({amount:Number(montant),note});
+            }
+          }} style={{padding:'4px 12px',borderRadius:8,background:'var(--green-vivid)',color:'#fff',fontSize:11,fontWeight:600}}>+ Versement</button>
+        </div>
+        {(()=>{
+          const pVers=versements.filter(v=>inRange(v.date));
+          const totalVerse=pVers.reduce((s,v)=>v.amount+s,0);
+          const resteAVerser=toVerse-totalVerse;
+          return(
+            <>
+              {pVers.length===0&&<div style={{fontSize:12,color:'var(--muted)',textAlign:'center',padding:8}}>Aucun versement</div>}
+              {pVers.map((v,i)=>(
+                <div key={v.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<pVers.length-1?'1px solid #f5f5f0':'none'}}>
+                  <div>
+                    <span style={{fontSize:13,fontWeight:600,color:'var(--green-vivid)'}}>{v.amount.toLocaleString()} F</span>
+                    {v.note&&<span style={{fontSize:11,color:'var(--muted)',marginLeft:6}}>{v.note}</span>}
+                    <div style={{fontSize:10,color:'var(--muted)'}}>{fmtDate(v.date)} {fmtTime(v.date)}</div>
+                  </div>
+                  <button onClick={()=>removeVersement(v.id)} style={{width:20,height:20,borderRadius:6,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,padding:0}}>×</button>
+                </div>
+              ))}
+              <div style={{marginTop:10,padding:'10px 0',borderTop:'2px solid var(--border)'}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                  <span style={{fontSize:13}}>Total versé</span>
+                  <span style={{fontSize:13,fontWeight:700,color:'var(--green-vivid)'}}>{totalVerse.toLocaleString()} F</span>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between'}}>
+                  <span style={{fontSize:15,fontWeight:800}}>Reste à verser</span>
+                  <span style={{fontSize:18,fontWeight:800,color:resteAVerser>0?'var(--red-vivid)':'var(--green-vivid)'}}>{resteAVerser.toLocaleString()} F</span>
+                </div>
+              </div>
+            </>
+          );
+        })()}
       </div>
 
       <div style={{height:90}}/>
@@ -2284,15 +2355,14 @@ function ConfigPage({isManager}){
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <div style={{textAlign:'right'}}>
-                    <span style={{fontSize:11,color:'var(--muted)'}}>Stock initial</span>
+                    <span style={{fontSize:11,color:'var(--muted)'}}>Stock total</span>
                     <input type="number" min="0" value={p.stock} onChange={e=>{const prods=[...config.products];prods[i]={...prods[i],stock:Number(e.target.value)||0};upd('products',prods)}}
                       style={{width:60,padding:'4px 6px',borderRadius:8,border:'1.5px solid var(--border)',fontSize:14,fontWeight:700,textAlign:'center',fontFamily:'inherit',outline:'none',display:'block',marginTop:2}}/>
                   </div>
                   <div style={{textAlign:'center',minWidth:50}}>
                     <span style={{fontSize:11,color:'var(--muted)'}}>Restant</span>
-                    <div style={{fontSize:20,fontWeight:800,color:noStock?'var(--red-vivid)':lowStock?'var(--amber-vivid)':'var(--green-vivid)',marginTop:2}}>
-                      {remaining}
-                    </div>
+                    <input type="number" min="0" value={typeof p.stockRemaining==='number'?p.stockRemaining:remaining} onChange={e=>{const prods=[...config.products];prods[i]={...prods[i],stockRemaining:Number(e.target.value)||0,stock:Math.max(prods[i].stock||0,used+Number(e.target.value))};upd('products',prods)}}
+                      style={{width:50,padding:'4px',borderRadius:8,border:'1.5px solid '+(noStock?'var(--red-vivid)':lowStock?'var(--amber-vivid)':'var(--green-vivid)'),fontSize:16,fontWeight:800,textAlign:'center',fontFamily:'inherit',outline:'none',display:'block',marginTop:2,color:noStock?'var(--red-vivid)':lowStock?'var(--amber-vivid)':'var(--green-vivid)'}}/>
                   </div>
                   <button onClick={()=>{if(confirm('Supprimer '+p.name+' ?'))upd('products',config.products.filter((_,j)=>j!==i))}} style={{width:28,height:28,borderRadius:8,background:'var(--red-bg)',color:'var(--red-vivid)',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>
                     <div style={{width:14,height:14}}><I.x/></div>
@@ -2897,7 +2967,7 @@ function ManagerDashboard(){
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
               <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Appelées aujourd'hui</div>
               <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,marginTop:2}}>{todayAppeles}</div>
-              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>sur {orders.length} total</div>
+              <div style={{fontSize:11,color:'var(--muted)',marginTop:2}}>sur {orders.filter(o=>inToday(o.createdAt)).length} reçues auj.</div>
             </div>
             <div style={{background:'#fff',borderRadius:14,padding:14,boxShadow:'0 1px 2px rgba(0,0,0,0.04)'}}>
               <div style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>Confirmées aujourd'hui</div>
@@ -2945,14 +3015,18 @@ function ManagerDashboard(){
               const useOrders=dashPeriod==='all';
               
               const gc2=(s)=>getStatusColor(s,config);
+              // Use order-based counting (same as Report) for consistency
+              const inP=(iso)=>{if(!iso)return false;const d=new Date(iso);return d>=pStart&&d<=pEnd};
+              const pAppelees=orders.filter(o=>o.attempts.some(a=>inP(a.ts)));
               const items=[
-                {s:S.NEW,l:'Nouvelles',c:gc2(S.NEW),n:useOrders?(counts[S.NEW]||0):pActivity.filter(a=>a.toStatus===S.NEW).length},
-                {s:S.LIVRAISON,l:'Confirmées',c:gc2(S.LIVRAISON),n:useOrders?(counts[S.LIVRAISON]||0):pActivity.filter(a=>a.toStatus===S.LIVRAISON).length},
-                {s:S.INJOIGNABLE,l:'Injoignables',c:gc2(S.INJOIGNABLE),n:useOrders?(counts[S.INJOIGNABLE]||0):pActivity.filter(a=>a.toStatus===S.INJOIGNABLE).length},
-                {s:S.RAPPELE,l:'Rappelés',c:gc2(S.RAPPELE),n:useOrders?(counts[S.RAPPELE]||0):pActivity.filter(a=>a.toStatus===S.RAPPELE).length},
-                {s:S.REPORTE,l:'Reportées',c:gc2(S.REPORTE),n:useOrders?(counts[S.REPORTE]||0):pActivity.filter(a=>a.toStatus===S.REPORTE).length},
-                {s:S.LIVRE,l:'Livrées',c:gc2(S.LIVRE),n:useOrders?(counts[S.LIVRE]||0):pActivity.filter(a=>a.toStatus===S.LIVRE).length},
-                {s:S.ANNULE,l:'Annulées',c:gc2(S.ANNULE),n:useOrders?(counts[S.ANNULE]||0):pActivity.filter(a=>a.toStatus===S.ANNULE).length},
+                {s:S.NEW,l:'Nouvelles',c:gc2(S.NEW),n:useOrders?(counts[S.NEW]||0):orders.filter(o=>inP(o.createdAt)&&o.status===S.NEW).length},
+                {s:S.LIVRAISON,l:'Confirmées',c:gc2(S.LIVRAISON),n:useOrders?(counts[S.LIVRAISON]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.LIVRAISON)).length},
+                {s:S.DISCUSSION,l:'En discussion',c:gc2(S.DISCUSSION),n:useOrders?(counts[S.DISCUSSION]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.DISCUSSION)).length},
+                {s:S.INJOIGNABLE,l:'Injoignables',c:gc2(S.INJOIGNABLE),n:useOrders?(counts[S.INJOIGNABLE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.INJOIGNABLE)).length},
+                {s:S.RAPPELE,l:'Rappelés',c:gc2(S.RAPPELE),n:useOrders?(counts[S.RAPPELE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.RAPPELE)).length},
+                {s:S.REPORTE,l:'Reportées',c:gc2(S.REPORTE),n:useOrders?(counts[S.REPORTE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.REPORTE)).length},
+                {s:S.LIVRE,l:'Livrées',c:gc2(S.LIVRE),n:useOrders?(counts[S.LIVRE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.LIVRE)||(o.deliveredAt&&inP(o.deliveredAt))).length},
+                {s:S.ANNULE,l:'Annulées',c:gc2(S.ANNULE),n:useOrders?(counts[S.ANNULE]||0):orders.filter(o=>o.attempts.some(a=>inP(a.ts)&&a.status===S.ANNULE)).length},
               ];
               const totalP=items.reduce((s,r)=>s+r.n,0)||1;
               return items.map((r,i)=>(

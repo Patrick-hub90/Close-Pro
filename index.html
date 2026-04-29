@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v4.9';
+var APP_VERSION='v5.0';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   localStorage.removeItem('cp_user');
@@ -896,8 +896,6 @@ function OrderDetail({order,onClose}){
 
   const save=()=>{
     if(!status){alert('Sélectionne un statut');return}
-    // Force product selection before any status change
-    if((config.products||[]).length>0&&!order.productId){alert('Sélectionne le produit avant d\'enregistrer');return}
     // Force zone before any status change
     if((config.zones||[]).length>0&&!zone&&!order.deliveryZone){alert('Sélectionne la zone de livraison avant d\'enregistrer');return}
     hasActed.current=true;

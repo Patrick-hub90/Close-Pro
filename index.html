@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v4.7';
+var APP_VERSION='v4.8';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   localStorage.removeItem('cp_user');
@@ -437,7 +437,7 @@ function Provider({children,spaceCode,isMgr}){
     const attempts=status!==S.NEW?[{status,ts:actionTs,comment}]:[];
 
     const timerExp=null; // Timer créé uniquement par la closeuse dans l'app
-    const order={id,orderNumber:o.orderNumber||'',fullName:o.fullName||'',phone:o.phone||'',whatsapp:o.whatsapp||'',productName:o.productName||'',totalPrice:o.totalPrice||0,quantity:o.quantity||1,city:o.city||'',createdAt,updatedAt:createdAt,status,attempts,timerExp,reportDate:status===S.REPORTE?actionTs:null,comment,pricePaid:status===S.LIVRE?o.totalPrice:null,deliveryZone:'',deliveryCost:0};
+    const order={id,orderNumber:o.orderNumber||'',fullName:o.fullName||'',phone:o.phone||'',whatsapp:o.whatsapp||'',productName:o.productName||'',sheetProductName:o.sheetProductName||o.productName||'',totalPrice:o.totalPrice||0,quantity:o.quantity||1,city:o.city||'',createdAt,updatedAt:createdAt,status,attempts,timerExp,reportDate:status===S.REPORTE?actionTs:null,comment,pricePaid:status===S.LIVRE?o.totalPrice:null,deliveryZone:'',deliveryCost:0};
     if(db)ordersRef(spaceCode).doc(id).set(order).catch(()=>{});
     return order;
   },[spaceCode]);
@@ -1851,7 +1851,7 @@ function ReportPage(){
 
 // ============== SHEET SYNC ==============
 function SheetSync({sheetUrl,sheetLabel,onClose}){
-  const {importOrder,clearAllOrders,syncFromSheet,orders,config,setConfig}=useContext(Ctx);
+  const {importOrder,clearAllOrders,syncFromSheet,orders,config,setConfig,spaceCode}=useContext(Ctx);
   const savedMapping=(config.sheetMappings||{})[sheetUrl]||{};
   const [step,setStep]=useState('tabs'); // tabs, map, done
   const [error,setError]=useState('');
@@ -1936,6 +1936,24 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
   const doImport=()=>{
     const existingMap={};
     if(mode==='add')orders.forEach(o=>{existingMap[o.orderNumber]=true;existingMap[o.orderNumber.replace('#','')]=true});
+    // BACKFILL: pour TOUTES les lignes Excel, retrouver les commandes existantes et remplir sheetProductName si absent
+    if(mapping.productName&&db&&spaceCode){
+      rows.forEach(row=>{
+        const rawNum=String(row[mapping.orderNumber]||'').trim();
+        if(!rawNum)return;
+        const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
+        const excelProd=row[mapping.productName]||'';
+        if(!excelProd)return;
+        const existing=orders.find(o=>{
+          const a=(o.orderNumber||'').replace('#','').trim();
+          const b=rawNum.replace('#','').trim();
+          return a&&a===b;
+        });
+        if(existing&&!existing.sheetProductName){
+          ordersRef(spaceCode).doc(existing.id).update({sheetProductName:excelProd}).catch(()=>{});
+        }
+      });
+    }
     let imp=0,skip=0;
     const newOrders=[];
     rows.forEach((row,idx)=>{
@@ -1948,7 +1966,8 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       const dateStr=mapping.date?row[mapping.date]||'':'';
       let actionDate=null;
       if(dateStr){try{const p=dateStr.split('/');if(p.length>=3)actionDate=new Date(p[2].length===4?p[2]:('20'+p[2]),p[1]-1,p[0]).toISOString();else actionDate=new Date(dateStr).toISOString()}catch(e){}}
-      const order=importOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:row[mapping.productName]||sheetLabel||'',totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||'',status:st,comment:comment,actionDate:actionDate},rows.length-idx);
+      const excelProdName=row[mapping.productName]||'';
+      const order=importOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:excelProdName||sheetLabel||'',sheetProductName:excelProdName,totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||'',status:st,comment:comment,actionDate:actionDate},rows.length-idx);
       newOrders.push(order);existingMap[orderNum]=true;imp++;
     });
     syncFromSheet(newOrders.reverse());

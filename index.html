@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v5.1';
+var APP_VERSION='v5.2';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   // Bump de version : on recharge pour avoir le nouveau code, MAIS on garde la session
@@ -777,7 +777,7 @@ function OrderCard({order,onClick}){
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
         <div style={{display:'flex',alignItems:'baseline',gap:6}}>
           <span style={{fontSize:15,fontWeight:700,color:'var(--text)',letterSpacing:-0.3}}>{order.orderNumber}</span>
-          <span style={{fontSize:14,fontWeight:600,color:'#333'}}>{order.fullName||'—'}</span>
+          <span style={{fontSize:14,fontWeight:600,color:order.fullName?'#333':'#888',fontStyle:order.fullName?'normal':'italic'}}>{order.fullName||(order.phone?'📞 '+order.phone:'Sans nom')}</span>
         </div>
         <span style={{fontSize:15,fontWeight:700,color:'var(--text)',letterSpacing:-0.2}}>{(order.pricePaid||order.totalPrice).toLocaleString()} F</span>
       </div>
@@ -1867,7 +1867,7 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
 
   const fields=[
     {key:'orderNumber',label:'N commande',auto:['order number','numero','order','commande','id']},
-    {key:'fullName',label:'Nom',auto:['full name','nom','name','client']},
+    {key:'fullName',label:'Nom',auto:['full name','fullname','nom','nom complet','nom client','name','client','client name','customer','customer name','buyer','buyer name','prenom','prénom','first name']},
     {key:'phone',label:'Telephone',auto:['phone','telephone','tel','mobile']},
     {key:'whatsapp',label:'WhatsApp',auto:['whatsapp','wa','* whatsapp']},
     {key:'productName',label:'Produit',auto:['product name','produit','product','article']},

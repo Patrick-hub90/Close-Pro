@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v5.2';
+var APP_VERSION='v5.3';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   // Bump de version : on recharge pour avoir le nouveau code, MAIS on garde la session
@@ -239,7 +239,10 @@ function loadConfig(){
     dailyReportHour:20,
     salaryGrid:[],
     funMessages:[],
-    waTemplates:[]
+    waTemplates:[],
+    // Facture
+    invoiceCompany:'',invoiceTagline:'',invoiceContact:'',invoiceAddress:'',
+    invoiceFooter:'Merci pour votre confiance !',invoiceCurrency:'F'
   };
 }
 
@@ -848,6 +851,179 @@ function OrderCard({order,onClick}){
   );
 }
 
+// ============== INVOICE MODAL ==============
+function InvoiceModal({order,config,onClose,wa}){
+  const todayStr=new Date().toLocaleDateString('fr');
+  const invNum='FAC-'+(order.orderNumber||'').replace('#','')+'-'+new Date().toISOString().slice(0,10).replace(/-/g,'');
+  const unitInit=order.totalPrice?Math.round((order.pricePaid||order.totalPrice)/(order.quantity||1)):0;
+  const [data,setData]=useState({
+    invoiceNum:invNum,date:todayStr,
+    clientName:order.fullName||'',clientPhone:order.phone||'',
+    clientAddress:order.address||'',clientCity:order.city||'',
+    productName:order.productName||order.sheetProductName||'',
+    quantity:order.quantity||1,unitPrice:unitInit,
+    deliveryCost:order.deliveryCost||0,note:''
+  });
+  const upd=(k,v)=>setData(d=>({...d,[k]:v}));
+  const subtotal=Number(data.quantity||0)*Number(data.unitPrice||0);
+  const total=subtotal+Number(data.deliveryCost||0);
+  const cur=config.invoiceCurrency||'F';
+
+  const buildText=()=>{
+    const sep='────────────────';
+    let t='';
+    t+='*'+(config.invoiceCompany||'FACTURE')+'*\n';
+    if(config.invoiceTagline)t+='_'+config.invoiceTagline+'_\n';
+    if(config.invoiceContact)t+='📞 '+config.invoiceContact+'\n';
+    if(config.invoiceAddress)t+='📍 '+config.invoiceAddress+'\n';
+    t+=sep+'\n';
+    t+='*FACTURE N° '+data.invoiceNum+'*\n';
+    t+='Date: '+data.date+'\n';
+    t+=sep+'\n';
+    t+='*Client:* '+data.clientName+'\n';
+    if(data.clientPhone)t+='*Tel:* '+data.clientPhone+'\n';
+    if(data.clientAddress)t+='*Adresse:* '+data.clientAddress+(data.clientCity&&data.clientCity!==data.clientAddress?', '+data.clientCity:'')+'\n';
+    t+=sep+'\n';
+    t+='*Article:* '+data.productName+'\n';
+    t+='Qté: '+data.quantity+' × '+Number(data.unitPrice).toLocaleString()+' '+cur+'\n';
+    t+='Sous-total: *'+subtotal.toLocaleString()+' '+cur+'*\n';
+    if(Number(data.deliveryCost)>0)t+='Livraison: '+Number(data.deliveryCost).toLocaleString()+' '+cur+'\n';
+    t+=sep+'\n';
+    t+='*TOTAL: '+total.toLocaleString()+' '+cur+'*\n';
+    if(data.note)t+='\n📝 '+data.note+'\n';
+    if(config.invoiceFooter)t+='\n'+config.invoiceFooter;
+    return t;
+  };
+
+  const sendWa=()=>{
+    if(!wa){alert('Aucun numéro WhatsApp');return}
+    window.open('https://wa.me/'+wa+'?text='+encodeURIComponent(buildText()),'_blank');
+  };
+
+  const printInvoice=()=>{
+    const html=document.getElementById('invoice-preview-html');
+    if(!html){alert('Aperçu introuvable');return}
+    const win=window.open('','_blank','width=700,height=900');
+    if(!win){alert('Bloque-popup actif — autorise les popups');return}
+    win.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+data.invoiceNum+'</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:8px;border:1px solid #ddd;text-align:left}@media print{body{padding:0}}</style></head><body>'+html.innerHTML+'<script>setTimeout(()=>window.print(),300)<\/script></body></html>');
+    win.document.close();
+  };
+
+  return(
+    <div className="overlay fade-in" onClick={e=>{if(e.target===e.currentTarget)onClose()}} style={{zIndex:200}}>
+      <div className="modal slide-up" style={{maxHeight:'92vh',overflow:'auto'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+          <div style={{fontSize:18,fontWeight:700}}>🧾 Générer facture</div>
+          <button onClick={onClose} style={{background:'#f2f2ef',borderRadius:12,padding:8,display:'flex'}}><div style={{width:18,height:18}}><I.x/></div></button>
+        </div>
+
+        {!config.invoiceCompany&&(
+          <div style={{padding:10,marginBottom:12,background:'#FEF3C7',border:'1px solid #FCD34D',borderRadius:10,fontSize:12,color:'#92400E'}}>
+            ⚠️ Configure le nom de ton entreprise dans <b>Config → Configuration Facture</b> pour personnaliser tes factures.
+          </div>
+        )}
+
+        {/* Editable form */}
+        <div style={{background:'#F9F9F6',borderRadius:14,padding:12,marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,color:'var(--muted)',marginBottom:8,letterSpacing:0.5}}>INFOS FACTURE</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            <div><label style={{fontSize:10,color:'var(--muted)'}}>N° facture</label>
+              <input className="input" value={data.invoiceNum} onChange={e=>upd('invoiceNum',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/></div>
+            <div><label style={{fontSize:10,color:'var(--muted)'}}>Date</label>
+              <input className="input" value={data.date} onChange={e=>upd('date',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/></div>
+          </div>
+          <div style={{fontSize:11,fontWeight:700,color:'var(--muted)',margin:'12px 0 8px',letterSpacing:0.5}}>CLIENT</div>
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+            <input className="input" placeholder="Nom complet" value={data.clientName} onChange={e=>upd('clientName',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/>
+            <input className="input" placeholder="Téléphone" value={data.clientPhone} onChange={e=>upd('clientPhone',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/>
+            <input className="input" placeholder="Adresse" value={data.clientAddress} onChange={e=>upd('clientAddress',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/>
+            <input className="input" placeholder="Ville" value={data.clientCity} onChange={e=>upd('clientCity',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/>
+          </div>
+          <div style={{fontSize:11,fontWeight:700,color:'var(--muted)',margin:'12px 0 8px',letterSpacing:0.5}}>ARTICLE</div>
+          <input className="input" placeholder="Nom produit" value={data.productName} onChange={e=>upd('productName',e.target.value)} style={{padding:'8px 10px',fontSize:13,marginBottom:6}}/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 2fr',gap:6}}>
+            <div><label style={{fontSize:10,color:'var(--muted)'}}>Qté</label>
+              <input className="input" type="number" value={data.quantity} onChange={e=>upd('quantity',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/></div>
+            <div><label style={{fontSize:10,color:'var(--muted)'}}>P.U. ({cur})</label>
+              <input className="input" type="number" value={data.unitPrice} onChange={e=>upd('unitPrice',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/></div>
+            <div><label style={{fontSize:10,color:'var(--muted)'}}>Livraison ({cur})</label>
+              <input className="input" type="number" value={data.deliveryCost} onChange={e=>upd('deliveryCost',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/></div>
+          </div>
+          <div style={{marginTop:10}}>
+            <label style={{fontSize:10,color:'var(--muted)'}}>Note (optionnel)</label>
+            <textarea className="input" rows={2} placeholder="Note personnalisée..." value={data.note} onChange={e=>upd('note',e.target.value)} style={{padding:'8px 10px',fontSize:13}}/>
+          </div>
+        </div>
+
+        {/* Preview */}
+        <div style={{fontSize:11,fontWeight:700,color:'var(--muted)',marginBottom:6,letterSpacing:0.5}}>👁️ APERÇU</div>
+        <div id="invoice-preview-html" style={{background:'#fff',border:'1.5px solid var(--border)',borderRadius:14,padding:16,marginBottom:14,fontSize:13}}>
+          <div style={{textAlign:'center',marginBottom:10,paddingBottom:10,borderBottom:'2px solid #111'}}>
+            <div style={{fontSize:20,fontWeight:800,letterSpacing:-0.5}}>{config.invoiceCompany||'Entreprise'}</div>
+            {config.invoiceTagline&&<div style={{fontSize:11,color:'#888',marginTop:2}}>{config.invoiceTagline}</div>}
+            <div style={{fontSize:11,color:'#888',marginTop:4}}>
+              {config.invoiceContact&&<span>📞 {config.invoiceContact}</span>}
+              {config.invoiceContact&&config.invoiceAddress&&<span> · </span>}
+              {config.invoiceAddress&&<span>📍 {config.invoiceAddress}</span>}
+            </div>
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:10,fontSize:12}}>
+            <div><b>FACTURE N°</b><br/>{data.invoiceNum}</div>
+            <div style={{textAlign:'right'}}><b>DATE</b><br/>{data.date}</div>
+          </div>
+          <div style={{background:'#F9F9F6',padding:10,borderRadius:8,marginBottom:10}}>
+            <div style={{fontSize:10,fontWeight:700,color:'#888',marginBottom:4}}>CLIENT</div>
+            <div style={{fontWeight:700}}>{data.clientName||'-'}</div>
+            {data.clientPhone&&<div style={{fontSize:12}}>📞 {data.clientPhone}</div>}
+            {data.clientAddress&&<div style={{fontSize:12}}>📍 {data.clientAddress}{data.clientCity&&data.clientCity!==data.clientAddress?', '+data.clientCity:''}</div>}
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:10,fontSize:12}}>
+            <thead>
+              <tr style={{background:'#111',color:'#fff'}}>
+                <th style={{padding:6,textAlign:'left'}}>Article</th>
+                <th style={{padding:6,textAlign:'center'}}>Qté</th>
+                <th style={{padding:6,textAlign:'right'}}>P.U.</th>
+                <th style={{padding:6,textAlign:'right'}}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style={{borderBottom:'1px solid #eee'}}>
+                <td style={{padding:8}}>{data.productName||'-'}</td>
+                <td style={{padding:8,textAlign:'center'}}>{data.quantity}</td>
+                <td style={{padding:8,textAlign:'right'}}>{Number(data.unitPrice).toLocaleString()} {cur}</td>
+                <td style={{padding:8,textAlign:'right',fontWeight:700}}>{subtotal.toLocaleString()} {cur}</td>
+              </tr>
+              {Number(data.deliveryCost)>0&&(
+                <tr style={{borderBottom:'1px solid #eee'}}>
+                  <td colSpan={3} style={{padding:8,textAlign:'right'}}>Frais de livraison</td>
+                  <td style={{padding:8,textAlign:'right',fontWeight:700}}>{Number(data.deliveryCost).toLocaleString()} {cur}</td>
+                </tr>
+              )}
+              <tr style={{background:'#F9F9F6'}}>
+                <td colSpan={3} style={{padding:10,textAlign:'right',fontSize:14,fontWeight:700}}>TOTAL</td>
+                <td style={{padding:10,textAlign:'right',fontSize:16,fontWeight:800,color:'#16A34A'}}>{total.toLocaleString()} {cur}</td>
+              </tr>
+            </tbody>
+          </table>
+          {data.note&&<div style={{padding:10,background:'#FEF3C7',borderRadius:8,fontSize:12,marginBottom:10}}>📝 {data.note}</div>}
+          {config.invoiceFooter&&<div style={{textAlign:'center',fontSize:12,fontStyle:'italic',color:'#888',marginTop:10,paddingTop:10,borderTop:'1px solid #eee'}}>{config.invoiceFooter}</div>}
+        </div>
+
+        {/* Action buttons */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+          <button onClick={printInvoice} style={{padding:14,borderRadius:12,background:'#fff',color:'var(--text)',fontWeight:600,fontSize:13,border:'1.5px solid var(--border)'}}>
+            🖨️ Imprimer / PDF
+          </button>
+          <button onClick={sendWa} disabled={!wa} style={{padding:14,borderRadius:12,background:wa?'#25D366':'#ccc',color:'#fff',fontWeight:700,fontSize:14,opacity:wa?1:0.6}}>
+            📱 Envoyer WhatsApp
+          </button>
+        </div>
+        {!wa&&<div style={{fontSize:11,color:'var(--red-vivid)',textAlign:'center'}}>⚠️ Aucun numéro WhatsApp pour ce client</div>}
+      </div>
+    </div>
+  );
+}
+
 // ============== ORDER DETAIL MODAL ==============
 function OrderDetail({order,onClose}){
   const {updateOrder,config,now,orders}=useContext(Ctx);
@@ -864,6 +1040,7 @@ function OrderDetail({order,onClose}){
   const [timerDate,setTimerDate]=useState('');
   const [showWa,setShowWa]=useState(false);
   const [waCustom,setWaCustom]=useState('');
+  const [showInvoice,setShowInvoice]=useState(false);
 
   const phone=fmtPhone(order.phone,config.phonePrefix);
   const wa=fmtWa(order.whatsapp,order.phone,config.phonePrefix);
@@ -913,6 +1090,8 @@ function OrderDetail({order,onClose}){
   };
 
   return(
+    <>
+    {showInvoice&&<InvoiceModal order={order} config={config} onClose={()=>setShowInvoice(false)} wa={wa}/>}
     <div className="overlay fade-in" onClick={e=>{
       if(e.target===e.currentTarget){
         if(order.status===S.NEW&&!hasActed.current){if(!confirm('Ce client n\'a pas encore été contacté. Fermer quand même ?'))return}
@@ -935,7 +1114,7 @@ function OrderDetail({order,onClose}){
         </div>
 
         {/* Action buttons */}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:showWa?8:16}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:8}}>
           <a href={`tel:${phone}`} style={{textDecoration:'none',display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'14px 0',background:'#22C55E',color:'#fff',borderRadius:14,fontWeight:600,fontSize:15}}>
             <div style={{width:20,height:20}}><I.phone/></div>Appeler
           </a>
@@ -943,6 +1122,9 @@ function OrderDetail({order,onClose}){
             <div style={{width:20,height:20}}><I.whatsapp/></div>WhatsApp
           </button>
         </div>
+        <button onClick={()=>setShowInvoice(true)} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 0',background:'#fff',color:'var(--text)',borderRadius:14,fontWeight:700,fontSize:14,border:'1.5px solid var(--border)',marginBottom:showWa?8:16}}>
+          🧾 Générer facture
+        </button>
 
         {/* WhatsApp template picker */}
         {showWa&&(
@@ -1169,6 +1351,7 @@ function OrderDetail({order,onClose}){
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -2660,6 +2843,42 @@ function ConfigPage({isManager}){
           </div>
           <div style={{marginTop:12,padding:10,borderRadius:10,background:'#F9F9F6',fontSize:12,color:'var(--muted)',lineHeight:1.6}}>
             Tu recevras un résumé complet chaque jour à {config.dailyReportHour||20}h : commandes, taux, CA, et montant à verser.
+          </div>
+        </div>
+      )}
+
+      {/* ======= MANAGER ONLY: Factures ======= */}
+      {isManager&&(
+        <div style={{margin:'8px 12px',background:'#fff',borderRadius:14,padding:14,border:'1px solid var(--border)'}}>
+          <div style={{fontSize:15,fontWeight:700,marginBottom:4,display:'flex',alignItems:'center',gap:6}}>🧾 Configuration Facture</div>
+          <div style={{fontSize:11,color:'var(--muted)',marginBottom:12}}>Ces infos apparaîtront sur toutes les factures envoyées aux clients.</div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            <div>
+              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Nom entreprise *</label>
+              <input className="input" placeholder="Ex: ClosePro Shop" value={config.invoiceCompany||''} onChange={e=>upd('invoiceCompany',e.target.value)} style={{marginTop:4}}/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Slogan / sous-titre</label>
+              <input className="input" placeholder="Ex: Vente en ligne" value={config.invoiceTagline||''} onChange={e=>upd('invoiceTagline',e.target.value)} style={{marginTop:4}}/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Téléphone / WhatsApp contact</label>
+              <input className="input" placeholder="+237 6XX XX XX XX" value={config.invoiceContact||''} onChange={e=>upd('invoiceContact',e.target.value)} style={{marginTop:4}}/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Adresse</label>
+              <input className="input" placeholder="Ex: Douala, Cameroun" value={config.invoiceAddress||''} onChange={e=>upd('invoiceAddress',e.target.value)} style={{marginTop:4}}/>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:8}}>
+              <div>
+                <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Message bas de facture</label>
+                <input className="input" placeholder="Merci pour votre confiance !" value={config.invoiceFooter||''} onChange={e=>upd('invoiceFooter',e.target.value)} style={{marginTop:4}}/>
+              </div>
+              <div>
+                <label style={{fontSize:11,color:'var(--muted)',fontWeight:600}}>Devise</label>
+                <input className="input" placeholder="F" value={config.invoiceCurrency||'F'} onChange={e=>upd('invoiceCurrency',e.target.value)} style={{marginTop:4}}/>
+              </div>
+            </div>
           </div>
         </div>
       )}

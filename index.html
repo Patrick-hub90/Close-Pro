@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v5.7';
+var APP_VERSION='v5.8';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   // Bump de version : on recharge pour avoir le nouveau code, MAIS on garde la session
@@ -119,12 +119,16 @@ function normalizeOrder(o){
   return{...o,status,attempts};
 }
 
-// DEDUP: keeps only ONE order per orderNumber, smart merge when duplicate
+// DEDUP: keeps only ONE order per (orderNumber + phone), smart merge when duplicate
+// Critère composite : un même numéro de commande peut correspondre à plusieurs clients
+// si les téléphones diffèrent (cas des Excel qui ré-utilisent les n° entre périodes).
 function dedup(orders){
   const seen={};
   orders.forEach(o=>{
-    const key=(o.orderNumber||'').replace('#','').trim();
-    if(!key)return;
+    const num=(o.orderNumber||'').replace('#','').trim();
+    if(!num)return;
+    const ph=(o.phone||'').replace(/\s/g,'').replace(/[^0-9+]/g,'');
+    const key=num+'|'+ph;
     const existing=seen[key];
     if(!existing){seen[key]=o;return}
     // Smart merge: keep older order's ID + app data, update basic fields from newer
@@ -494,12 +498,17 @@ function Provider({children,spaceCode,isMgr}){
   // Firebase is THE database. Sheet is just a source for new orders.
   const syncFromSheet=useCallback((sheetRows)=>{
     setOrders(prev=>{
-      // Build index of existing orders by normalized orderNumber (map → for backfill)
+      // Clé composite : orderNumber + phone (un même n° peut exister plusieurs fois
+      // pour des clients différents). Index pour dedup + backfill.
+      const normPh=p=>String(p||'').replace(/\s/g,'').replace(/[^0-9+]/g,'');
       const existingKeys=new Set();
       const existingByKey={};
       prev.forEach(o=>{
-        const key=(o.orderNumber||'').replace('#','').trim().toLowerCase();
-        if(key){existingKeys.add(key);existingByKey[key]=o}
+        const num=(o.orderNumber||'').replace('#','').trim().toLowerCase();
+        if(!num)return;
+        const composite=num+'|'+normPh(o.phone);
+        existingKeys.add(composite);
+        existingByKey[num]=o; // pour backfill (qui matche juste sur n°)
       });
       // Also index by phone+product for orders without order numbers
       const existingFingerprints=new Set();
@@ -523,12 +532,15 @@ function Provider({children,spaceCode,isMgr}){
       let added=0;
       const newOrders=[];
       sheetRows.forEach(row=>{
-        const key=(row.orderNumber||'').replace('#','').trim().toLowerCase();
+        const num=(row.orderNumber||'').replace('#','').trim().toLowerCase();
+        const rowPh=normPh(row.phone);
+        const compositeKey=num+'|'+rowPh;
         const fp=(row.phone||'').replace(/\s/g,'')+'|'+norm(row.productName||'');
-        
-        // Skip if already exists (by order number OR by phone+product)
-        if(key&&existingKeys.has(key))return;
-        if(!key&&fp!=='|'&&existingFingerprints.has(fp))return;
+
+        // Skip si n° + téléphone identiques (vrai doublon).
+        // Sinon — même n° avec téléphone différent = client différent = nouvelle commande.
+        if(num&&existingKeys.has(compositeKey))return;
+        if(!num&&fp!=='|'&&existingFingerprints.has(fp))return;
         
         // New order — create with app-generated ID
         const id=gid();
@@ -566,7 +578,7 @@ function Provider({children,spaceCode,isMgr}){
           if(FV)spaceRef(spaceCode).collection('dailyStats').doc(day).set({nouvelles:FV.increment(1),lastUpdate:new Date().toISOString()},{merge:true}).catch(()=>{});
         }
         newOrders.push(order);
-        existingKeys.add(key);
+        existingKeys.add(compositeKey);
         existingFingerprints.add(fp);
         added++;
       });
@@ -2144,14 +2156,15 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
   };
 
   const doImport=()=>{
+    // Clé composite : orderNumber + phone (un même n° peut exister pour plusieurs
+    // clients différents si Excel ré-utilise les numéros entre périodes).
+    const normPh=p=>String(p||'').replace(/\s/g,'').replace(/[^0-9+]/g,'');
     const existingMap={};
     if(mode==='add')orders.forEach(o=>{
-      const on=o.orderNumber||'';
-      if(on){
-        existingMap[on]=true;
-        existingMap[on.replace('#','')]=true;
-        existingMap['#'+on.replace('#','')]=true;
-      }
+      const on=(o.orderNumber||'').replace('#','').trim();
+      if(!on)return;
+      const ph=normPh(o.phone);
+      existingMap[on+'|'+ph]=true;
     });
     console.log('[ClosePro Import] existingMap built — entries:',Object.keys(existingMap).length);
     // BACKFILL: pour TOUTES les lignes Excel, retrouver les commandes existantes et remplir
@@ -2186,7 +2199,9 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       if(!rawNum){emptyRows.push(idx);return}
       const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
       const rawNumNoHash=rawNum.replace('#','');
-      if(mode==='add'&&(existingMap[orderNum]||existingMap[rawNum]||existingMap[rawNumNoHash])){skip++;skippedNums.push(rawNum);return}
+      const rowPhone=normPh(row[mapping.phone]);
+      const compositeKey=rawNumNoHash+'|'+rowPhone;
+      if(mode==='add'&&existingMap[compositeKey]){skip++;skippedNums.push(rawNum+' (tel:'+rowPhone+')');return}
       const st=mapping.statut?mapStatus(row[mapping.statut]):S.NEW;
       const comment=mapping.commentaire?row[mapping.commentaire]||'':'';
       const dateStr=mapping.date?row[mapping.date]||'':'';
@@ -2195,21 +2210,13 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       const excelProdName=row[mapping.productName]||'';
       const excelCarModel=mapping.carModel?(row[mapping.carModel]||''):'';
       const order=importOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:excelProdName||sheetLabel||'',sheetProductName:excelProdName,carModel:excelCarModel,totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||'',status:st,comment:comment,actionDate:actionDate},rows.length-idx);
-      newOrders.push(order);existingMap[orderNum]=true;importedNums.push(rawNum);imp++;
+      newOrders.push(order);existingMap[compositeKey]=true;importedNums.push(rawNum+' (tel:'+rowPhone+')');imp++;
     });
     console.log('[ClosePro Import] RÉSUMÉ ─────────────');
     console.log('[ClosePro Import]   Importées:',imp,'→',importedNums);
-    console.log('[ClosePro Import]   Skip (déjà existantes):',skip,'→',skippedNums);
-    console.log('[ClosePro Import]   Lignes Excel vides ignorées:',emptyRows.length,'(index:',emptyRows,')');
+    console.log('[ClosePro Import]   Skip (n° + téléphone identiques):',skip,'→',skippedNums);
+    console.log('[ClosePro Import]   Lignes Excel vides:',emptyRows.length);
     console.log('[ClosePro Import] ────────────────────');
-    // Diagnostic spécifique : commandes 1039-1058
-    const targets=['1039','1040','1041','1042','1043','1044','1045','1046','1047','1048','1049','1050','1051','1052','1053','1054','1055','1056','1057','1058'];
-    targets.forEach(t=>{
-      const inSkip=skippedNums.some(s=>s.replace('#','')===t);
-      const inImported=importedNums.some(s=>s.replace('#','')===t);
-      const inExisting=existingMap['#'+t]||existingMap[t];
-      console.log('[ClosePro DIAG #'+t+'] importée:',inImported,'| skip:',inSkip,'| dans existingMap:',!!inExisting);
-    });
     syncFromSheet(newOrders.reverse());
     setImported(imp);setSkipped(skip);
     // Save mapping AND make sure URL is in sheetUrls

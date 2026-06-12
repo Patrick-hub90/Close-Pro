@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v5.5';
+var APP_VERSION='v5.6';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   // Bump de version : on recharge pour avoir le nouveau code, MAIS on garde la session
@@ -326,10 +326,21 @@ function Provider({children,spaceCode,isMgr}){
     if(!spaceCode||!db)return;
     const unsubs=[];
 
-    // Orders listener — just merge, dedup is automatic in setOrders
-    unsubs.push(ordersRef(spaceCode).orderBy('createdAt','desc').onSnapshot(snap=>{
+    // Orders listener — pas d'orderBy Firestore pour ne JAMAIS exclure un doc sans createdAt.
+    // Tri côté client + auto-réparation des createdAt manquants.
+    unsubs.push(ordersRef(spaceCode).onSnapshot(snap=>{
       if(suppressRef.current)return;
-      const fbData=snap.docs.map(d=>({id:d.id,...d.data()}));
+      const fbData=snap.docs.map(d=>{
+        const data=d.data();
+        // Auto-fix : si createdAt manque, l'ajouter immédiatement en Firebase
+        if(!data.createdAt){
+          const now=new Date().toISOString();
+          data.createdAt=now;
+          if(!data.updatedAt)data.updatedAt=now;
+          ordersRef(spaceCode).doc(d.id).update({createdAt:now,updatedAt:data.updatedAt}).catch(()=>{});
+        }
+        return{id:d.id,...data};
+      });
       if(fbData.length===0)return;
       setOrders(prev=>dedup([...fbData,...prev].map(normalizeOrder)));
       setFbReady(true);

@@ -10,7 +10,7 @@
 <meta http-equiv="Expires" content="0">
 <script>
 // Version — change this to force reload on all devices
-var APP_VERSION='v5.6';
+var APP_VERSION='v5.7';
 var storedVersion=localStorage.getItem('cp_appVersion');
 if(storedVersion&&storedVersion!==APP_VERSION){
   // Bump de version : on recharge pour avoir le nouveau code, MAIS on garde la session
@@ -2145,7 +2145,15 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
 
   const doImport=()=>{
     const existingMap={};
-    if(mode==='add')orders.forEach(o=>{existingMap[o.orderNumber]=true;existingMap[o.orderNumber.replace('#','')]=true});
+    if(mode==='add')orders.forEach(o=>{
+      const on=o.orderNumber||'';
+      if(on){
+        existingMap[on]=true;
+        existingMap[on.replace('#','')]=true;
+        existingMap['#'+on.replace('#','')]=true;
+      }
+    });
+    console.log('[ClosePro Import] existingMap built — entries:',Object.keys(existingMap).length);
     // BACKFILL: pour TOUTES les lignes Excel, retrouver les commandes existantes et remplir
     // sheetProductName + carModel si absents
     if(db&&spaceCode&&(mapping.productName||mapping.carModel)){
@@ -2168,12 +2176,17 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       });
     }
     let imp=0,skip=0;
+    const skippedNums=[];
+    const importedNums=[];
+    const emptyRows=[];
     const newOrders=[];
+    console.log('[ClosePro Import] Excel rows total:',rows.length);
     rows.forEach((row,idx)=>{
-      const rawNum=row[mapping.orderNumber]||'';
-      if(!rawNum)return;
+      const rawNum=String(row[mapping.orderNumber]||'').trim();
+      if(!rawNum){emptyRows.push(idx);return}
       const orderNum=rawNum.startsWith('#')?rawNum:'#'+rawNum;
-      if(mode==='add'&&(existingMap[orderNum]||existingMap[rawNum])){skip++;return}
+      const rawNumNoHash=rawNum.replace('#','');
+      if(mode==='add'&&(existingMap[orderNum]||existingMap[rawNum]||existingMap[rawNumNoHash])){skip++;skippedNums.push(rawNum);return}
       const st=mapping.statut?mapStatus(row[mapping.statut]):S.NEW;
       const comment=mapping.commentaire?row[mapping.commentaire]||'':'';
       const dateStr=mapping.date?row[mapping.date]||'':'';
@@ -2182,7 +2195,20 @@ function SheetSync({sheetUrl,sheetLabel,onClose}){
       const excelProdName=row[mapping.productName]||'';
       const excelCarModel=mapping.carModel?(row[mapping.carModel]||''):'';
       const order=importOrder({orderNumber:orderNum,fullName:row[mapping.fullName]||'',phone:row[mapping.phone]||'',whatsapp:row[mapping.whatsapp]||row[mapping.phone]||'',productName:excelProdName||sheetLabel||'',sheetProductName:excelProdName,carModel:excelCarModel,totalPrice:Number(String(row[mapping.totalPrice]||'0').replace(/[^0-9]/g,''))||0,quantity:Number(row[mapping.quantity])||1,city:row[mapping.city]||'',status:st,comment:comment,actionDate:actionDate},rows.length-idx);
-      newOrders.push(order);existingMap[orderNum]=true;imp++;
+      newOrders.push(order);existingMap[orderNum]=true;importedNums.push(rawNum);imp++;
+    });
+    console.log('[ClosePro Import] RÉSUMÉ ─────────────');
+    console.log('[ClosePro Import]   Importées:',imp,'→',importedNums);
+    console.log('[ClosePro Import]   Skip (déjà existantes):',skip,'→',skippedNums);
+    console.log('[ClosePro Import]   Lignes Excel vides ignorées:',emptyRows.length,'(index:',emptyRows,')');
+    console.log('[ClosePro Import] ────────────────────');
+    // Diagnostic spécifique : commandes 1039-1058
+    const targets=['1039','1040','1041','1042','1043','1044','1045','1046','1047','1048','1049','1050','1051','1052','1053','1054','1055','1056','1057','1058'];
+    targets.forEach(t=>{
+      const inSkip=skippedNums.some(s=>s.replace('#','')===t);
+      const inImported=importedNums.some(s=>s.replace('#','')===t);
+      const inExisting=existingMap['#'+t]||existingMap[t];
+      console.log('[ClosePro DIAG #'+t+'] importée:',inImported,'| skip:',inSkip,'| dans existingMap:',!!inExisting);
     });
     syncFromSheet(newOrders.reverse());
     setImported(imp);setSkipped(skip);

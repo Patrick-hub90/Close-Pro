@@ -8,3 +8,6 @@ dist-ssr
 .vercel
 .DS_Store
 *.log
+
+.vercel
+.env*

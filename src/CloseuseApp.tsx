@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FiltreId, Order, Statut } from './types'
 import { CLOSEUSE, ORDERS, LIVRAISONS } from './data'
 import { useNow, matchFiltre, byUrgence } from './lib'
+import { supabase, type Agent } from './lib/supabase'
+import { mapDbOrder } from './lib/mapOrder'
 import OrderCard from './components/OrderCard'
 import CallMode from './components/CallMode'
 import ArchiveView from './components/ArchiveView'
@@ -16,13 +18,35 @@ const FILTRES: { id: FiltreId; label: string }[] = [
 
 type Tab = 'appels' | 'archive' | 'moi'
 
-export default function CloseuseApp({ onSwitchRole }: { onSwitchRole: () => void }) {
+export default function CloseuseApp({
+  onSwitchRole, live, agent,
+}: {
+  onSwitchRole: () => void
+  live?: boolean
+  agent?: Agent | null
+}) {
   const now = useNow()
-  const [orders, setOrders] = useState<Order[]>(ORDERS)
+  const [orders, setOrders] = useState<Order[]>(live ? [] : ORDERS)
   const [filtre, setFiltre] = useState<FiltreId>('a_appeler')
   const [tab, setTab] = useState<Tab>('appels')
   const [sasDone, setSasDone] = useState(false)
   const [call, setCall] = useState<{ queue: Order[]; index: number } | null>(null)
+
+  const nom = (live && agent?.nom) || CLOSEUSE.nom
+  const pays = (live && agent?.pays) || CLOSEUSE.pays
+
+  useEffect(() => {
+    if (!live || !supabase) return
+    let active = true
+    supabase
+      .from('orders')
+      .select('*')
+      .not('statut', 'in', '(livre,annule,refuse)')
+      .then(({ data }) => { if (active) setOrders((data ?? []).map(mapDbOrder)) })
+    return () => { active = false }
+  }, [live])
+
+  const sasOrders = live ? orders.filter((o) => o.statut === 'livraison') : LIVRAISONS
 
   const counts = useMemo(() => {
     const c: Record<FiltreId, number> = { a_appeler: 0, rappels: 0, retard: 0, toutes: 0 }
@@ -43,11 +67,12 @@ export default function CloseuseApp({ onSwitchRole }: { onSwitchRole: () => void
     if (liste.length) setCall({ queue: liste, index: 0 })
   }
   function handleResult(o: Order, statut: Statut) {
-    setOrders((prev) =>
-      prev.map((x) =>
-        x.id === o.id ? { ...x, statut, tentatives: statut === 'injoignable' ? x.tentatives + 1 : x.tentatives } : x
-      )
-    )
+    const newTent = statut === 'injoignable' ? o.tentatives + 1 : o.tentatives
+    setOrders((prev) => prev.map((x) => (x.id === o.id ? { ...x, statut, tentatives: newTent } : x)))
+    if (live && supabase) {
+      void supabase.from('orders').update({ statut, tentatives: newTent }).eq('id', o.id)
+      void supabase.from('call_attempts').insert({ order_id: o.id, agent_id: agent?.id ?? null, canal: 'tel', resultat: statut })
+    }
     setCall((c) => {
       if (!c) return null
       const next = c.index + 1
@@ -59,18 +84,18 @@ export default function CloseuseApp({ onSwitchRole }: { onSwitchRole: () => void
     return <CallMode queue={call.queue} index={call.index} onResult={handleResult} onClose={() => setCall(null)} />
   }
 
-  const showSas = tab === 'appels' && !sasDone && LIVRAISONS.length > 0
+  const showSas = tab === 'appels' && !sasDone && sasOrders.length > 0
 
   return (
     <div className="app">
-      {showSas && <MorningSas orders={LIVRAISONS} onDone={() => setSasDone(true)} />}
+      {showSas && <MorningSas orders={sasOrders} onDone={() => setSasDone(true)} />}
 
       {tab === 'appels' && !showSas && (
         <>
           <div className="hdr">
             <span className="who">
               <i className="ti ti-world" aria-hidden="true" />
-              {CLOSEUSE.pays} · <b>{CLOSEUSE.nom}</b>
+              {pays} · <b>{nom}</b>
             </span>
             <span className="score"><i className="ti ti-bolt" aria-hidden="true" />{CLOSEUSE.score}</span>
           </div>
@@ -90,7 +115,7 @@ export default function CloseuseApp({ onSwitchRole }: { onSwitchRole: () => void
           {liste.length === 0 ? (
             <div className="empty">
               <i className="ti ti-circle-check" aria-hidden="true" />
-              Rien à traiter ici — tout est à jour.
+              {live ? 'Aucune commande à appeler pour le moment.' : 'Rien à traiter ici — tout est à jour.'}
             </div>
           ) : (
             liste.map((o) => <OrderCard key={o.id} o={o} now={now} onOpen={openAt} />)
@@ -109,11 +134,12 @@ export default function CloseuseApp({ onSwitchRole }: { onSwitchRole: () => void
 
       {tab === 'moi' && (
         <div className="profil">
-          <div className="av">{CLOSEUSE.nom.slice(0, 2).toUpperCase()}</div>
-          <h3>{CLOSEUSE.nom}</h3>
-          <p>{CLOSEUSE.pays} · score de ponctualité {CLOSEUSE.score}</p>
+          <div className="av">{nom.slice(0, 2).toUpperCase()}</div>
+          <h3>{nom}</h3>
+          <p>{pays} · score de ponctualité {CLOSEUSE.score}</p>
           <button className="roleswitch" onClick={onSwitchRole}>
-            <i className="ti ti-arrows-left-right" aria-hidden="true" />Passer en vue propriétaire
+            <i className={`ti ${live ? 'ti-logout' : 'ti-arrows-left-right'}`} aria-hidden="true" />
+            {live ? 'Se déconnecter' : 'Passer en vue propriétaire'}
           </button>
         </div>
       )}

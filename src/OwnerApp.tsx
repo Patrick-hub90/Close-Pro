@@ -2,10 +2,12 @@ import { useState } from 'react'
 import Attribution from './components/Attribution'
 import Dashboard from './components/Dashboard'
 import ArchiveView from './components/ArchiveView'
+import Compte from './components/Compte'
+import type { Agent } from './lib/supabase'
 
 type Tab = 'attribution' | 'dashboard' | 'archive' | 'moi'
 
-export default function OwnerApp({ onSwitchRole }: { onSwitchRole: () => void }) {
+export default function OwnerApp({ onSwitchRole, live, agent }: { onSwitchRole: () => void; live?: boolean; agent?: Agent | null }) {
   const [tab, setTab] = useState<Tab>('attribution')
 
   return (
@@ -13,7 +15,9 @@ export default function OwnerApp({ onSwitchRole }: { onSwitchRole: () => void })
       {tab === 'attribution' && <Attribution />}
       {tab === 'dashboard' && <Dashboard />}
       {tab === 'archive' && <ArchiveView />}
-      {tab === 'moi' && (
+      {tab === 'moi' && (live ? (
+        <Compte agent={agent} onLogout={onSwitchRole} />
+      ) : (
         <div className="profil">
           <div className="av" style={{ background: 'var(--blue-bg)', color: 'var(--blue-tx)' }}>PB</div>
           <h3>Patrick</h3>
@@ -22,7 +26,7 @@ export default function OwnerApp({ onSwitchRole }: { onSwitchRole: () => void })
             <i className="ti ti-arrows-left-right" aria-hidden="true" />Passer en vue closeuse
           </button>
         </div>
-      )}
+      ))}
 
       <nav className="nav">
         <div className="nav-inner">

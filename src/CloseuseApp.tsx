@@ -8,6 +8,7 @@ import OrderCard from './components/OrderCard'
 import CallMode from './components/CallMode'
 import ArchiveView from './components/ArchiveView'
 import MorningSas from './components/MorningSas'
+import Compte from './components/Compte'
 
 const FILTRES: { id: FiltreId; label: string }[] = [
   { id: 'a_appeler', label: 'À appeler' },
@@ -132,17 +133,18 @@ export default function CloseuseApp({
 
       {tab === 'archive' && <ArchiveView />}
 
-      {tab === 'moi' && (
+      {tab === 'moi' && (live ? (
+        <Compte agent={agent} onLogout={onSwitchRole} />
+      ) : (
         <div className="profil">
           <div className="av">{nom.slice(0, 2).toUpperCase()}</div>
           <h3>{nom}</h3>
           <p>{pays} · score de ponctualité {CLOSEUSE.score}</p>
           <button className="roleswitch" onClick={onSwitchRole}>
-            <i className={`ti ${live ? 'ti-logout' : 'ti-arrows-left-right'}`} aria-hidden="true" />
-            {live ? 'Se déconnecter' : 'Passer en vue propriétaire'}
+            <i className="ti ti-arrows-left-right" aria-hidden="true" />Passer en vue propriétaire
           </button>
         </div>
-      )}
+      ))}
 
       {!showSas && (
         <nav className="nav">

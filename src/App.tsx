@@ -39,7 +39,7 @@ export default function App() {
   }
   if (mode === 'live') {
     return agent?.role === 'owner'
-      ? <OwnerApp onSwitchRole={logout} />
+      ? <OwnerApp live agent={agent} onSwitchRole={logout} />
       : <CloseuseApp live agent={agent} onSwitchRole={logout} />
   }
   // démo (sans Supabase configuré, ou via "Continuer en démo")

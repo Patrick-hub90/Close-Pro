@@ -1,57 +1,56 @@
-# SETUP — passer Close-Pro en production
+# SETUP — Close-Pro en production (sans serveur, démarrage à blanc)
 
-Checklist pour brancher la vraie donnée et les alertes. ~30–45 min. À faire ensemble.
+Architecture simplifiée : **Google Sheet → Supabase** (direct) et **alertes Telegram dans Supabase** (pg_cron). Pas de Vercel. L'app démarre **à blanc** : seules les nouvelles commandes entrent, on ne charge **pas** l'historique.
 
 ---
 
-## 1. Supabase (base de données)
+## 1. Supabase
 
-1. Créer un compte sur [supabase.com](https://supabase.com) → **New project** (région la plus proche, ex. Europe West).
-2. Récupérer dans **Project Settings → API** :
-   - `Project URL` → `SUPABASE_URL` (et `VITE_SUPABASE_URL`)
-   - clé `anon public` → `VITE_SUPABASE_ANON_KEY`
-   - clé `service_role` (secrète) → `SUPABASE_SERVICE_ROLE_KEY` (⚠️ backend uniquement, jamais dans le front)
-3. **SQL Editor** → coller le contenu de `supabase/schema.sql` → **Run**.
-4. **Authentication → Providers** : activer Email (ou Magic Link). Créer un compte propriétaire et les comptes closeuses, puis insérer une ligne par compte dans la table `agents` (role `owner` / `closer`, `pays`, `auth_uid` = l'id du user).
+- [x] Projet créé
+- [x] `supabase/schema.sql` exécuté
+- [ ] Exécuter **`supabase/telegram_cron.sql`** (SQL Editor) — crée le job d'alerte.
+  - Si `create extension pg_cron / pg_net` est refusé : **Database → Extensions** → activer `pg_cron` et `pg_net`, puis relancer.
+- [ ] Créer les comptes : **Authentication → Users** (1 propriétaire + les closeuses), puis pour chacun insérer une ligne dans `agents` (`role`, `nom`, `pays`, `auth_uid` = id du user).
+
+Récupérer dans **Project Settings → API** : `Project URL`, clé `anon public`, clé `service_role` (secrète).
 
 ## 2. Telegram (alertes propriétaire)
 
-1. Sur Telegram, écrire à **@BotFather** → `/newbot` → suivre → récupérer le **token** → `TELEGRAM_BOT_TOKEN`.
-2. Écrire `/start` à votre nouveau bot.
-3. Ouvrir `https://api.telegram.org/bot<token>/getUpdates` dans le navigateur → lire `result[0].message.chat.id` → `TELEGRAM_CHAT_ID`.
+- [x] Bot créé : **@CloseProBot**
+- [ ] Ouvrir Telegram → écrire **/start** à **@CloseProBot** (indispensable pour obtenir le `chat_id`).
+- [ ] Mettre le token et le `chat_id` dans la table `app_config` (déjà créée par le script) :
+  ```sql
+  update app_config set value = 'VOTRE_TOKEN'   where key = 'telegram_token';
+  update app_config set value = 'VOTRE_CHAT_ID' where key = 'telegram_chat_id';
+  ```
 
-## 3. Déploiement Vercel
-
-1. Pousser le projet sur GitHub, puis l'importer sur [vercel.com](https://vercel.com).
-2. Avant le déploiement : `npm i @supabase/supabase-js` et `npm i -D @vercel/node`.
-3. **Settings → Environment Variables** : renseigner toutes les variables de `.env.example`
-   (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
-   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `INGEST_SECRET`).
-4. Déployer. Le cron SLA (`api/sla-cron`, chaque minute) est activé par `vercel.json`.
-5. Tester Telegram : ouvrir `https://VOTRE-APP.vercel.app/api/telegram?text=test` → vous devez recevoir le message.
-
-## 4. Google Sheet → app (synchro)
+## 3. Google Sheet → Supabase
 
 Pour **chaque pays** (un Sheet par pays) :
 
-1. Ouvrir le Google Sheet EasySell → **Extensions → Apps Script**.
-2. Coller `apps-script/Code.gs`. Renseigner en haut :
-   - `INGEST_URL = 'https://VOTRE-APP.vercel.app/api/ingest'`
-   - `INGEST_SECRET` = la même valeur que sur Vercel
-   - `PAYS` = `CM` / `CI` / `SN`
-   - `FEUILLE` = le nom de l'onglet des commandes
-3. **Import de l'historique (une fois)** : exécuter `pushBackfill()` → toutes les anciennes commandes partent en archive, **sans déclencher de compteur** (règle anti-inondation).
-4. **Temps réel** : **Déclencheurs → Ajouter** → fonction `pushNouvellesCommandes`, événement `onChange` (ou minuté chaque minute). Chaque nouvelle commande arrive alors dans l'app et arme le compteur 10 min.
+1. Sheet → **Extensions → Apps Script** → coller `apps-script/Code.gs`.
+2. Renseigner en haut : `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (clé `service_role`), `PAYS` (`CM`/`CI`/`SN`), `FEUILLE`.
+3. Exécuter **une fois** `marquerDepart()` → l'historique existant est ignoré (démarrage à blanc).
+4. **Déclencheurs → Ajouter** → fonction `pushNouvellesCommandes`, événement **« Lors de la modification »** (ou minuté). Chaque nouvelle commande arrive alors dans Supabase et arme le compteur 10 min.
 
-## 5. Brancher le front sur Supabase
+## 4. Le front (l'app)
 
-Étape de code (à faire ensemble) : remplacer les imports de démo (`data.ts`, `archive.json`) par des requêtes Supabase via `@supabase/supabase-js`, et l'auth par Supabase Auth. La structure (`types.ts`, vues, RLS) est déjà prête pour ça.
+- Pour tester : `npm run dev` → ouvrir l'URL réseau sur le téléphone → « Ajouter à l'écran d'accueil ».
+- Hébergement (plus tard, 5 min) : Netlify ou Vercel en site statique (`npm run build` → `dist/`).
+- Câblage Supabase (à faire ensemble) : `.env.local` avec `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`, puis remplacer les données de démo par les requêtes Supabase + l'auth. La structure est déjà prête.
 
 ---
 
-## Rappels importants (issus de l'analyse terrain)
+## Vérifs rapides
 
-- **Aucune preuve d'appel n'est possible en PWA** : on mesure la *discipline de saisie* (résultat saisi avant l'échéance) et on la croise avec le **taux de livraison**. Preuve dure éventuelle = click-to-call (Twilio / Africa's Talking) en phase ultérieure.
-- **Sheets sans heure** : le « 10 min » démarre à la **détection** de la ligne → la synchro doit être quasi temps réel (déclencheur `onChange`, pas un import lent).
-- **Données sales** : téléphones, ville (Address 1) et région (City) sont nettoyés à l'ingestion ; ne jamais dédupliquer sur le téléphone seul (numéros parfois partagés).
-- **Telegram** privilégié à WhatsApp pour les alertes (WhatsApp API impose des templates payants hors fenêtre 24 h).
+- **Telegram marche ?** Dans Supabase SQL Editor : `select notify_late_orders();` (envoie une alerte s'il y a déjà une commande en retard).
+- **Le Sheet pousse bien ?** Ajouter une ligne de test dans le Sheet → vérifier dans Supabase **Table Editor → orders**.
+
+## Rappels (analyse terrain)
+
+- Pas de preuve d'appel possible en PWA → on mesure la *discipline de saisie* + on croise avec le **taux de livraison**.
+- Sheets sans heure → le « 10 min » démarre à la **détection** (déclencheur `onChange`, pas un import lent).
+- Données sales nettoyées à l'ingestion ; jamais de dédup sur le téléphone seul.
+- Telegram > WhatsApp pour les alertes (WhatsApp API = templates payants hors fenêtre 24 h).
+
+> Note : le dossier `api/` (version Vercel) reste disponible comme alternative, mais **n'est pas nécessaire** avec cette architecture Supabase-directe.

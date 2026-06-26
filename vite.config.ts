@@ -7,6 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: { cleanupOutdatedCaches: true, clientsClaim: true, skipWaiting: true },
       manifest: {
         name: 'Close-Pro',
         short_name: 'Close-Pro',

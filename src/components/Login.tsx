@@ -1,7 +1,17 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-export default function Login({ onDemo }: { onDemo: () => void }) {
+function friendly(m: string): string {
+  const x = (m || '').toLowerCase()
+  if (x.includes('logins are disabled') || x.includes('signups are disabled') || x.includes('provider'))
+    return "La connexion par email est désactivée côté Supabase. Réactive le fournisseur Email (Authentication → Providers → Email)."
+  if (x.includes('invalid login credentials')) return 'Email ou mot de passe incorrect.'
+  if (x.includes('email not confirmed')) return "Email non confirmé. Désactive « Confirm email » dans Supabase."
+  if (x.includes('failed to fetch') || x.includes('networkerror')) return 'Connexion au serveur impossible. Vérifie ta connexion internet et réessaie.'
+  return m || 'Connexion impossible. Réessaie.'
+}
+
+export default function Login() {
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
   const [err, setErr] = useState<string | null>(null)
@@ -9,12 +19,17 @@ export default function Login({ onDemo }: { onDemo: () => void }) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!supabase) return
+    if (!supabase) { setErr('Application non configurée (Supabase manquant).'); return }
     setBusy(true)
     setErr(null)
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw })
-    if (error) setErr(error.message)
-    setBusy(false)
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw })
+      if (error) setErr(friendly(error.message))
+    } catch (e: any) {
+      setErr(friendly(e?.message || ''))
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -38,8 +53,6 @@ export default function Login({ onDemo }: { onDemo: () => void }) {
             {busy ? 'Connexion…' : 'Se connecter'}
           </button>
         </form>
-
-        <button className="login-demo" onClick={onDemo}>Continuer en démo</button>
       </div>
     </div>
   )

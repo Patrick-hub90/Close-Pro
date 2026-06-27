@@ -1,13 +1,18 @@
 import type { Order } from '../types'
-import { fcfa, hms, hm, telLink, waLink, isLate } from '../lib'
+import { fcfa, hms, telLink, waLink, isLate } from '../lib'
 
 function Timer({ o, now, paused }: { o: Order; now: number; paused?: boolean }) {
-  if (o.statut === 'a_rappeler' && o.rappelAt) {
-    const late = now > o.rappelAt
+  // Rappel / injoignable programmé : vrai décompte vers l'heure de rappel.
+  if ((o.statut === 'a_rappeler' || o.statut === 'injoignable') && o.rappelAt) {
+    if (paused) return <span className="chip muted"><i className="ti ti-player-pause" aria-hidden="true" /> en pause</span>
+    const rem = o.rappelAt - now
+    const ic = o.statut === 'a_rappeler' ? 'ti-bell' : 'ti-phone-off'
+    if (rem < 0) {
+      return <span className="chip dang"><i className="ti ti-alert-triangle" aria-hidden="true" /> +{hms(-rem)}</span>
+    }
     return (
-      <span className={`chip ${late ? 'dang' : 'info'}`}>
-        <i className="ti ti-bell" aria-hidden="true" />
-        {late ? `${hm(o.rappelAt)} dépassé` : hm(o.rappelAt)}
+      <span className={`chip ${rem < 180_000 ? 'warn' : 'info'}`}>
+        <i className={`ti ${ic}`} aria-hidden="true" /> {hms(rem)}
       </span>
     )
   }

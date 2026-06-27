@@ -71,7 +71,7 @@ begin
     where o.is_backfill = false
       and o.statut in ('a_appeler', 'a_rappeler', 'injoignable')
       and (
-            (o.rappel_at is not null and o.rappel_at < now())
+            (o.rappel_at is not null and o.rappel_at + interval '10 minutes' < now())
          or (o.rappel_at is null and o.statut = 'a_appeler'
              and o.appel_deadline is not null and o.appel_deadline < now())
           )
@@ -80,7 +80,7 @@ begin
     limit 60
   loop
     prefix := case when r.rappel_at is not null
-                   then E'\xE2\x8F\xB0 RAPPEL MANQUE'
+                   then E'\xE2\x8F\xB0 RAPPEL DEPASSE (+10 min)'
                    else E'\xF0\x9F\x9F\xA0 RETARD (10 min)' end;
     msg := prefix || ' — ' || coalesce(r.closeuse_nom, 'closeuse') || E'\n'
         || r.numero || ' - ' || coalesce(r.nom_complet, '') || ' (' || coalesce(r.region, '-') || ')' || E'\n'

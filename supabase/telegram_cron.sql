@@ -109,9 +109,11 @@ begin
     from call_attempts ca
     join orders o on o.id = ca.order_id
     left join agents a on a.id = ca.agent_id
+    left join countries c on c.code = o.pays
     where coalesce(ca.notifie, false) = false
       and ca.canal = 'tel'
-      and ca.created_at > now() - interval '1 day'
+      and ca.created_at > now() - interval '30 minutes'                       -- traitement récent
+      and in_working_hours(coalesce(c.fuseau, 'Africa/Abidjan'), a.horaires)  -- pendant les heures de travail
     order by ca.created_at asc
     limit 40
   loop

@@ -53,9 +53,9 @@ export default function MorningSas({ orders, onDone, onResolve, onSetCost }: {
         <span className="who"><i className="ti ti-sun" aria-hidden="true" />À clôturer · livraisons</span>
       </div>
 
-      <div className="lockbar">
-        <i className="ti ti-lock" aria-hidden="true" />
-        Clôture ces livraisons pour débloquer tes appels du jour
+      <div className="lockbar soft">
+        <i className="ti ti-sun" aria-hidden="true" />
+        Livraisons d'hier — clôture-les maintenant ou plus tard
         <span className="pg">{done}/{total}</span>
       </div>
 
@@ -101,8 +101,8 @@ export default function MorningSas({ orders, onDone, onResolve, onSetCost }: {
       })}
 
       <div className="cta-wrap" style={{ background: 'transparent' }}>
-        <button className="sasdone" disabled={done < total} onClick={onDone}>
-          {done < total ? `Encore ${total - done} à clôturer` : 'Commencer ma journée'}
+        <button className="sasdone" onClick={onDone}>
+          {done < total ? `Commencer ma journée (${total - done} en attente)` : 'Commencer ma journée'}
         </button>
       </div>
 

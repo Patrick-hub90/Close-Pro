@@ -97,7 +97,7 @@ a { color: inherit; text-decoration: none; }
 .empty .ti { font-size: 30px; color: var(--green); display: block; margin-bottom: 10px; }
 
 /* Call mode */
-.call { position: fixed; inset: 0; background: var(--bg); z-index: 50; display: flex; justify-content: center; }
+.call { position: fixed; inset: 0; background: var(--bg); z-index: 50; display: flex; justify-content: center; overflow-y: auto; }
 .call-inner { width: 100%; max-width: 460px; padding: 14px 16px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; min-height: 100%; }
 .call-top { display: flex; align-items: center; justify-content: space-between; }
 .call-top .x { width: 34px; height: 34px; border-radius: 50%; border: 0.5px solid var(--border); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; font-size: 18px; color: var(--text-2); }

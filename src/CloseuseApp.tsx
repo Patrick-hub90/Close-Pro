@@ -224,8 +224,8 @@ export default function CloseuseApp({
   }
   function openAt(o: Order) {
     if (bloqueNouvelle(o)) { setBlockLate(true); return }
-    // Ordre imposé sur tous les filtres : ouvrir d'abord la plus ancienne commande à appeler.
-    if (!isArchive && APPELABLES.includes(o.statut)) {
+    // Ordre imposé UNIQUEMENT sur l'onglet « À appeler » ; libre sur les autres filtres.
+    if (viewFiltre === 'a_appeler' && APPELABLES.includes(o.statut)) {
       const premiere = displayList.find((x) => APPELABLES.includes(x.statut))
       if (premiere && premiere.id !== o.id) { setOrderBlock(premiere); return }
     }

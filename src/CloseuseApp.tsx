@@ -14,6 +14,7 @@ const FILTRES: { id: FiltreId; label: string }[] = [
   { id: 'a_appeler', label: 'À appeler' },
   { id: 'rappels', label: 'Rappels' },
   { id: 'retard', label: 'En retard' },
+  { id: 'livraisons', label: 'Livraisons' },
   { id: 'toutes', label: 'Toutes' },
   { id: 'archivees', label: 'Archivées' },
 ]

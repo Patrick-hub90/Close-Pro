@@ -32,6 +32,21 @@ export interface Order {
   rappelLieu?: string
   commentaire?: string
   clientCount?: number    // nb de commandes du meme numero (doublon / recurrent)
+  extra?: Record<string, unknown> // colonnes variables du Sheet (non mappees / ajoutees)
+  closeuseId?: string     // agent assigne (pour le classement proprietaire)
 }
 
-export type FiltreId = 'a_appeler' | 'rappels' | 'retard' | 'toutes'
+export type FiltreId = 'a_appeler' | 'rappels' | 'retard' | 'livraisons' | 'toutes' | 'archivees'
+
+/** Résultat d'un appel : statut + saisies (rappel, édition, commentaire). */
+export interface CallResult {
+  statut: Statut
+  commentaire?: string
+  rappelAt?: number
+  rappelLieu?: string
+  prixNegocie?: number
+  coutLivraison?: number
+  produit?: string
+  quantite?: number
+  adresse?: string
+}

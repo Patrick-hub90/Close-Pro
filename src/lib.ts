@@ -22,6 +22,26 @@ export function mmss(ms: number): string {
   return `${m}:${String(s % 60).padStart(2, '0')}`
 }
 
+/** Décompte au format hh:mm:ss. */
+export function hms(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** Heures de travail : l'instant 'now' est-il dans la plage [debut, fin] (HH:MM) ? */
+export function isWorkingNow(horaires: { debut?: string; fin?: string } | null | undefined, now: number): boolean {
+  if (!horaires?.debut || !horaires?.fin) return true // pas d'horaires définis = toujours actif
+  const d = new Date(now)
+  const cur = d.getHours() * 60 + d.getMinutes()
+  const [hd, md] = horaires.debut.split(':').map(Number)
+  const [hf, mf] = horaires.fin.split(':').map(Number)
+  const deb = hd * 60 + (md || 0)
+  const fin = hf * 60 + (mf || 0)
+  return fin > deb ? cur >= deb && cur < fin : cur >= deb || cur < fin
+}
+
 export function hm(ts: number): string {
   const d = new Date(ts)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -47,18 +67,21 @@ export function rappelToday(h: number, m: number): number {
 const TERMINAUX: Order['statut'][] = ['livre', 'annule', 'refuse']
 
 export function isLate(o: Order, now: number): boolean {
-  if (o.deadline && (o.statut === 'a_appeler') && now > o.deadline) return true
-  if (o.rappelAt && o.statut === 'a_rappeler' && now > o.rappelAt) return true
+  if (o.rappelAt && now > o.rappelAt) return true
+  if (o.deadline && o.statut === 'a_appeler' && !o.rappelAt && now > o.deadline) return true
   return false
 }
 
-export function matchFiltre(o: Order, f: FiltreId, now: number): boolean {
-  if (TERMINAUX.includes(o.statut) || o.statut === 'livraison') return f === 'toutes'
+export function matchFiltre(o: Order, f: FiltreId, now: number, working = true): boolean {
+  if (TERMINAUX.includes(o.statut)) return f === 'toutes'
+  if (o.statut === 'livraison') return f === 'livraisons' || f === 'toutes'
   switch (f) {
-    case 'a_appeler': return o.statut === 'a_appeler' || o.statut === 'injoignable'
-    case 'rappels': return o.statut === 'a_rappeler'
-    case 'retard': return isLate(o, now)
+    case 'a_appeler': return (o.statut === 'a_appeler' || o.statut === 'injoignable') && !o.rappelAt
+    case 'rappels': return !!o.rappelAt
+    case 'retard': return working && isLate(o, now)
+    case 'livraisons': return o.statut === 'livraison'
     case 'toutes': return true
+    case 'archivees': return false
   }
 }
 

@@ -216,7 +216,7 @@ export default function CloseuseApp({
   // Les confirmées, livrées, rappels, etc. restent ouvrables librement.
   const bloqueNouvelle = (o: Order) => workingNow && counts.retard > 0 && o.statut === 'a_appeler' && !isLate(o, now)
   // Ordre d'appel imposé : de la plus ancienne (haut de liste) à la plus récente.
-  const APPELABLES: Statut[] = ['a_appeler', 'a_rappeler', 'injoignable']
+  const APPELABLES: Statut[] = ['a_appeler', 'a_rappeler', 'injoignable', 'reporte']
   function openForce(o: Order) {
     setOrderBlock(null)
     const i = displayList.findIndex((x) => x.id === o.id)
@@ -224,8 +224,8 @@ export default function CloseuseApp({
   }
   function openAt(o: Order) {
     if (bloqueNouvelle(o)) { setBlockLate(true); return }
-    // Ordre imposé UNIQUEMENT sur le filtre « À appeler ».
-    if (viewFiltre === 'a_appeler' && APPELABLES.includes(o.statut)) {
+    // Ordre imposé sur tous les filtres : ouvrir d'abord la plus ancienne commande à appeler.
+    if (!isArchive && APPELABLES.includes(o.statut)) {
       const premiere = displayList.find((x) => APPELABLES.includes(x.statut))
       if (premiere && premiere.id !== o.id) { setOrderBlock(premiere); return }
     }

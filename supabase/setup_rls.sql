@@ -58,6 +58,9 @@ create policy orders_closer on orders for all to authenticated
   with check (pays in (select pays from agents where auth_uid = auth.uid() and role = 'closer'));
 
 -- events / app_config : proprietaire (le cron Telegram tourne en postgres et bypass)
+-- app_config peut ne pas exister si telegram_cron.sql n'a pas encore tourne -> on la cree.
+create table if not exists app_config (key text primary key, value text);
+
 alter table events enable row level security;
 drop policy if exists events_rw on events;
 create policy events_rw on events for all to authenticated using (public.is_owner()) with check (public.is_owner());

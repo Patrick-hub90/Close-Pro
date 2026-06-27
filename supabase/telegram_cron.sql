@@ -122,6 +122,7 @@ begin
       when 'injoignable' then 'Injoignable' when 'reporte' then 'Reporté'
       when 'whatsapp' then 'WhatsApp' when 'annule' then 'Annulé'
       when 'livre' then 'Livré' when 'refuse' then 'Refus'
+      when 'ne_reconnait_pas' then 'Ne reconnaît pas'
       else coalesce(r.resultat, '?') end;
     msg := E'\xF0\x9F\x93\x9E ' || coalesce(r.closeuse_nom, 'Closeuse') || ' a traité ' || r.numero
         || E' \xE2\x86\x92 ' || lbl

@@ -138,7 +138,9 @@ create table if not exists events (
 );
 
 -- ============================================================
--- RLS (cloisonnement : une closeuse ne voit que SES commandes)
+-- RLS de base — REMPLACEE par setup_rls.sql (qui fait foi : cloisonnement PAR PAYS,
+-- la closeuse voit/edite toutes les commandes de son pays). Les policies ci-dessous
+-- ne sont qu'un point de depart historique.
 -- ============================================================
 alter table orders enable row level security;
 

@@ -39,7 +39,7 @@ export default function MorningSas({ orders, onDone, onResolve, onSetCost }: {
 
   // Tout marquer livré : bloque si des commandes n'ont pas de coût de livraison.
   const toutLivrer = () => {
-    const restants = list.filter((o) => resolved[o.id] !== 'livre' && resolved[o.id] !== 'annule')
+    const restants = list.filter((o) => !resolved[o.id])
     const sansCout = restants.filter((o) => !coutDe(o))
     if (sansCout.length) { setErreur(sansCout.map((o) => o.numero)); return }
     const next = { ...resolved }

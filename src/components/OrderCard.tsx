@@ -26,7 +26,7 @@ function Timer({ o, now, paused, owner }: { o: Order; now: number; paused?: bool
     return (
       <span className="chip warn">
         <i className="ti ti-phone-off" aria-hidden="true" />
-        {o.tentatives}/4
+        {o.tentatives} tent.
       </span>
     )
   }

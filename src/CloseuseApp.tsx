@@ -134,9 +134,8 @@ export default function CloseuseApp({
     }
   }, [now, orders, live, workingNow, isOwner])
 
-  // Revue de livraison du matin : commandes confirmées AVANT aujourd'hui, plus les
-  // reportées dont la date de reprise est arrivée. Une commande confirmée le jour
-  // même n'y apparaît que le lendemain (la livraison suit).
+  // Revue de livraison du matin : commandes confirmées / en livraison AVANT aujourd'hui.
+  // Une commande confirmée le jour même n'y apparaît que le lendemain (la livraison suit).
   const startOfToday = useMemo(() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() }, [now])
   const sasOrders = live
     ? scoped.filter((o) => (o.statut === 'confirme' || o.statut === 'livraison') && (!o.confirmeAt || o.confirmeAt < startOfToday))
@@ -315,10 +314,16 @@ export default function CloseuseApp({
   function resolveSas(orderId: string, issue: 'livre' | 'annule' | 'reporte') {
     const statut: Statut = issue === 'livre' ? 'livre' : issue === 'annule' ? 'annule' : 'livraison'
     const nowMs = Date.now()
-    setOrders((prev) => prev.map((x) => (x.id === orderId ? { ...x, statut, livreAt: statut === 'livre' ? nowMs : x.livreAt } : x)))
+    const ord = orders.find((x) => x.id === orderId)
+    setOrders((prev) => prev.map((x) => (x.id === orderId
+      ? { ...x, statut, livreAt: statut === 'livre' ? nowMs : x.livreAt, confirmeAt: statut === 'livre' ? (x.confirmeAt ?? nowMs) : x.confirmeAt } : x)))
     if (live && supabase) {
       const patch: Record<string, any> = { statut }
-      if (statut === 'livre') patch.livre_at = new Date(nowMs).toISOString()
+      if (statut === 'livre') {
+        patch.livre_at = new Date(nowMs).toISOString()
+        // Sécurité Finance : une vente sans date de confirmation serait invisible.
+        if (ord && !ord.confirmeAt) patch.confirme_at = new Date(nowMs).toISOString()
+      }
       supabase.from('orders').update(patch).eq('id', orderId).then(({ error }) => {
         if (error) console.error('[Close-Pro] clôture livraison échouée:', error.message)
       })

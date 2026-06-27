@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { fcfa } from '../lib'
 
 type Periode = 'jour' | '7j' | '30j' | 'perso'
-type Ligne = { id: string; numero: string; adresse: string; cout: number; recu: number; net: number; at: number }
+type Ligne = { id: string; numero: string; adresse: string; cout: number; recu: number; net: number }
 
 function isoDay(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0')
@@ -52,7 +52,7 @@ function Finance({ pays }: { pays?: string }) {
       if (error) { setErr(error.message); setLoading(false); return }
       setLignes((data ?? []).map((d: any) => {
         const recu = d.total ?? 0, cout = d.cout_livraison ?? 0
-        return { id: d.id, numero: d.numero, adresse: d.adresse || d.region || '—', cout, recu, net: recu - cout, at: d.confirme_at ? new Date(d.confirme_at).getTime() : deb }
+        return { id: d.id, numero: d.numero, adresse: d.adresse || d.region || '—', cout, recu, net: recu - cout }
       }))
       setLoading(false)
     })

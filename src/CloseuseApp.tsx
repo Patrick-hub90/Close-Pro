@@ -408,7 +408,7 @@ export default function CloseuseApp({
           {isOwner ? (
             <div className="etat">
               <div className="es"><b>{counts.a_appeler}</b><span>À appeler</span></div>
-              <div className="es dang"><b>{counts.retard}</b><span>En retard</span></div>
+              <div className="es"><b>{counts.rappels}</b><span>Rappels</span></div>
               <div className="es"><b>{etat.confirme || 0}</b><span>Confirmées</span></div>
               <div className="es"><b>{etat.livraison || 0}</b><span>Livraison</span></div>
             </div>

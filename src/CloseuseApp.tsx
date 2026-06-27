@@ -280,6 +280,8 @@ export default function CloseuseApp({
       commentaire: r.commentaire ?? x.commentaire,
       rappelAt: keepRappel ? (r.rappelAt ?? x.rappelAt) : undefined,
       rappelLieu: keepRappel ? (r.rappelLieu ?? x.rappelLieu) : undefined,
+      // L'échéance suit l'horodatage : effacée pour un statut sans horaire.
+      deadline: keepRappel ? (r.rappelAt ?? x.deadline) : undefined,
     })
     const estTerminal = r.statut === 'livre' || r.statut === 'annule' || r.statut === 'refuse'
     setOrders((prev) => {
@@ -306,7 +308,7 @@ export default function CloseuseApp({
         db.rappel_at = iso; db.rappel_lieu = r.rappelLieu ?? null
         db.appel_deadline = iso; db.appel_deadline_type = 'rappel_programme'
       } else if (!keepRappel) {
-        db.rappel_at = null; db.rappel_lieu = null
+        db.rappel_at = null; db.rappel_lieu = null; db.appel_deadline = null
       }
       supabase.from('orders').update(db).eq('id', o.id).then(({ error }) => {
         if (error) console.error('[Close-Pro] update order failed:', error.message, error)

@@ -16,11 +16,11 @@ const RESULTATS: { statut: Statut; label: string; icon: string; tone: Tone; sche
 
 const STATUT_LABELS: Record<string, string> = {
   a_appeler: 'À appeler', a_rappeler: 'À rappeler', injoignable: 'Injoignable', reporte: 'Reporté',
-  confirme: 'Confirmé', whatsapp: 'WhatsApp', refuse: 'Refus',
+  confirme: 'Livraison', whatsapp: 'WhatsApp', refuse: 'Refus',
   ne_reconnait_pas: 'Ne reconnaît pas', livraison: 'En livraison', livre: 'Livré', annule: 'Annulé',
 }
 const TONE_OF: Record<string, Tone> = {
-  confirme: 'ok', a_rappeler: 'info', reporte: 'rep', injoignable: 'warn',
+  confirme: 'info', a_rappeler: 'info', reporte: 'rep', injoignable: 'warn',
   whatsapp: 'wa', annule: 'dang', livre: 'liv', livraison: 'info', refuse: 'dang',
 }
 

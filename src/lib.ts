@@ -65,8 +65,8 @@ export function rappelToday(h: number, m: number): number {
 }
 
 const TERMINAUX: Order['statut'][] = ['livre', 'annule', 'refuse']
-// Confirmée / en livraison / reportée : pipeline de livraison (revue le matin), plus dans les appels.
-const LIVRAISON_PIPELINE: Order['statut'][] = ['confirme', 'livraison', 'reporte']
+// Confirmée / en livraison : pipeline de livraison (revue le matin), plus dans les appels.
+const LIVRAISON_PIPELINE: Order['statut'][] = ['confirme', 'livraison']
 
 export function isLate(o: Order, now: number): boolean {
   if (TERMINAUX.includes(o.statut) || LIVRAISON_PIPELINE.includes(o.statut)) return false
@@ -75,8 +75,8 @@ export function isLate(o: Order, now: number): boolean {
   return false
 }
 
-// Statuts qui portent un horaire visible dans « Rappels » : à rappeler, injoignable.
-const PLANIFIES: Order['statut'][] = ['a_rappeler', 'injoignable']
+// Statuts qui portent un horaire visible dans « Rappels » : à rappeler, injoignable, reporté.
+const PLANIFIES: Order['statut'][] = ['a_rappeler', 'injoignable', 'reporte']
 
 export function matchFiltre(o: Order, f: FiltreId, now: number, working = true): boolean {
   if (TERMINAUX.includes(o.statut)) return f === 'toutes'

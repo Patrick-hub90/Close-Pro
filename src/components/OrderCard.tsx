@@ -1,12 +1,18 @@
 import type { Order } from '../types'
-import { fcfa, hms, telLink, waLink, isLate } from '../lib'
+import { fcfa, hms, hm, telLink, waLink, isLate } from '../lib'
 
-function Timer({ o, now, paused }: { o: Order; now: number; paused?: boolean }) {
-  // Rappel / injoignable programmé : vrai décompte vers l'heure de rappel.
-  if ((o.statut === 'a_rappeler' || o.statut === 'injoignable') && o.rappelAt) {
+function Timer({ o, now, paused, owner }: { o: Order; now: number; paused?: boolean; owner?: boolean }) {
+  // Vue propriétaire : affichage calme (heure cible figée), sans compte à rebours ni urgence.
+  if (owner) {
+    const t = o.rappelAt ?? o.deadline
+    if (!t) return null
+    return <span className="chip muted"><i className="ti ti-clock" aria-hidden="true" /> {hm(t)}</span>
+  }
+  // Rappel / injoignable / reporté programmé : vrai décompte vers l'heure cible.
+  if ((o.statut === 'a_rappeler' || o.statut === 'injoignable' || o.statut === 'reporte') && o.rappelAt) {
     if (paused) return <span className="chip muted"><i className="ti ti-player-pause" aria-hidden="true" /> en pause</span>
     const rem = o.rappelAt - now
-    const ic = o.statut === 'a_rappeler' ? 'ti-bell' : 'ti-phone-off'
+    const ic = o.statut === 'injoignable' ? 'ti-phone-off' : o.statut === 'reporte' ? 'ti-calendar-event' : 'ti-bell'
     if (rem < 0) {
       return <span className="chip dang"><i className="ti ti-alert-triangle" aria-hidden="true" /> +{hms(-rem)}</span>
     }
@@ -62,7 +68,7 @@ const STATUT_INFO: Record<Order['statut'], { label: string; tone: string }> = {
 }
 
 export default function OrderCard({
-  o, now, onOpen, selectMode, selected, onToggle, paused,
+  o, now, onOpen, selectMode, selected, onToggle, paused, owner,
 }: {
   o: Order
   now: number
@@ -71,8 +77,10 @@ export default function OrderCard({
   selected?: boolean
   onToggle?: (id: string) => void
   paused?: boolean
+  owner?: boolean
 }) {
-  const late = !paused && isLate(o, now)
+  // Pas de pulsation d'urgence pour le propriétaire (vue de supervision).
+  const late = !paused && !owner && isLate(o, now)
   return (
     <div
       className={`card ${late ? 'late' : ''} ${selectMode ? 'selecting' : ''} ${selected ? 'selected' : ''}`}
@@ -83,7 +91,7 @@ export default function OrderCard({
       ) : null}
       <div className="r1">
         <span className="nm">{o.client}</span>
-        <Timer o={o} now={now} paused={paused} />
+        <Timer o={o} now={now} paused={paused} owner={owner} />
       </div>
       <div className="sub">
         {o.produit}{o.quantite > 1 ? ` · ×${o.quantite}` : ''}

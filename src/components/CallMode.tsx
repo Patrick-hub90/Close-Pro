@@ -99,8 +99,9 @@ export default function CallMode({
   }, [oid])
 
   if (!o) return null
-  // Commande déjà dans le pipeline de livraison → écran de clôture (Livré / Annulé / Reporté).
-  const isLivraison = o.statut === 'confirme' || o.statut === 'livraison' || o.statut === 'reporte'
+  // Commande confirmée / en livraison → écran de clôture (Livré / Annulé / Reporté).
+  // (Reporté n'est plus ici : il devient un rappel et s'ouvre en mode appel.)
+  const isLivraison = o.statut === 'confirme' || o.statut === 'livraison'
   const total = Math.max(0, Math.round(prix)) * Math.max(1, qte) + Math.max(0, Math.round(cout))
   // Détails : toutes les colonnes du Sheet, y compris les valeurs sans nom de colonne.
   const extraEntries = o.extra

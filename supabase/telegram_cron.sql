@@ -69,7 +69,7 @@ begin
     left join agents a on a.id = o.closeuse_id
     left join countries c on c.code = o.pays
     where o.is_backfill = false
-      and o.statut in ('a_appeler', 'a_rappeler', 'injoignable')
+      and o.statut in ('a_appeler', 'a_rappeler', 'injoignable', 'reporte')
       and (
             (o.rappel_at is not null and o.rappel_at + interval '10 minutes' < now())
          or (o.rappel_at is null and o.statut = 'a_appeler'

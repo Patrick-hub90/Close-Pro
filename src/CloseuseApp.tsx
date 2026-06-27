@@ -123,7 +123,7 @@ export default function CloseuseApp({
   // Moteur de contrainte : alerte (vibration + bip) quand une commande passe en retard.
   const notifiedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    if (!live || !workingNow) return
+    if (!live || !workingNow || isOwner) return // le propriétaire ne reçoit pas de bip/vibration
     for (const o of orders) {
       if (!isLate(o, now)) continue
       const key = o.id + ':' + (o.rappelAt || o.deadline || 0)
@@ -132,19 +132,14 @@ export default function CloseuseApp({
       try { navigator.vibrate?.([300, 150, 300]) } catch { /* non supporte */ }
       beep()
     }
-  }, [now, orders, live, workingNow])
+  }, [now, orders, live, workingNow, isOwner])
 
   // Revue de livraison du matin : commandes confirmées AVANT aujourd'hui, plus les
   // reportées dont la date de reprise est arrivée. Une commande confirmée le jour
   // même n'y apparaît que le lendemain (la livraison suit).
   const startOfToday = useMemo(() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() }, [now])
-  const endOfToday = startOfToday + 86_400_000
   const sasOrders = live
-    ? scoped.filter((o) => {
-        if (o.statut === 'reporte') return !o.rappelAt || o.rappelAt < endOfToday
-        if (o.statut === 'confirme' || o.statut === 'livraison') return !o.confirmeAt || o.confirmeAt < startOfToday
-        return false
-      })
+    ? scoped.filter((o) => (o.statut === 'confirme' || o.statut === 'livraison') && (!o.confirmeAt || o.confirmeAt < startOfToday))
     : LIVRAISONS
 
   const counts = useMemo(() => {
@@ -469,7 +464,7 @@ export default function CloseuseApp({
             </div>
           ) : (
             displayList.map((o) => (
-              <OrderCard key={o.id} o={o} now={now} onOpen={openAt} paused={!workingNow}
+              <OrderCard key={o.id} o={o} now={now} onOpen={openAt} paused={!workingNow} owner={isOwner}
                 selectMode={selectMode} selected={selected.has(o.id)} onToggle={toggleSelect} />
             ))
           )}

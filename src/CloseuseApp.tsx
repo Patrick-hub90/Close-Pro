@@ -69,6 +69,7 @@ export default function CloseuseApp({
   const [call, setCall] = useState<{ queue: Order[]; index: number } | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [blockLate, setBlockLate] = useState(false)
+  const [orderBlock, setOrderBlock] = useState<Order | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [archived, setArchived] = useState<Order[]>([])
   const [selectedPays, setSelectedPays] = useState('')
@@ -210,8 +211,19 @@ export default function CloseuseApp({
   // traiter avant d'ouvrir une NOUVELLE commande (statut « à appeler », jamais traitée).
   // Les confirmées, livrées, rappels, etc. restent ouvrables librement.
   const bloqueNouvelle = (o: Order) => workingNow && counts.retard > 0 && o.statut === 'a_appeler' && !isLate(o, now)
+  // Ordre d'appel imposé : de la plus ancienne (haut de liste) à la plus récente.
+  const APPELABLES: Statut[] = ['a_appeler', 'a_rappeler', 'injoignable']
+  function openForce(o: Order) {
+    setOrderBlock(null)
+    const i = displayList.findIndex((x) => x.id === o.id)
+    setCall({ queue: displayList, index: Math.max(0, i) })
+  }
   function openAt(o: Order) {
     if (bloqueNouvelle(o)) { setBlockLate(true); return }
+    if (APPELABLES.includes(o.statut)) {
+      const premiere = displayList.find((x) => APPELABLES.includes(x.statut))
+      if (premiere && premiere.id !== o.id) { setOrderBlock(premiere); return }
+    }
     const i = displayList.findIndex((x) => x.id === o.id)
     setCall({ queue: displayList, index: Math.max(0, i) })
   }
@@ -505,6 +517,18 @@ export default function CloseuseApp({
             <h3>Appelle d'abord les retards</h3>
             <p>Il reste <b>{counts.retard}</b> commande{counts.retard > 1 ? 's' : ''} en retard. Traite-les avant d'appeler une nouvelle commande.</p>
             <button onClick={() => { setFiltre('retard'); setSelectMode(false); setBlockLate(false) }}>Voir les retards</button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Fenêtre : respecter l'ordre (plus ancienne d'abord) */}
+      {orderBlock ? (
+        <div className="err-overlay" onClick={() => setOrderBlock(null)}>
+          <div className="errbox" onClick={(e) => e.stopPropagation()}>
+            <i className="ti ti-sort-ascending-2" aria-hidden="true" />
+            <h3>Respecte l'ordre d'appel</h3>
+            <p>Appelle de la plus ancienne à la plus récente. Commence par <b>{orderBlock.numero}</b>.</p>
+            <button onClick={() => openForce(orderBlock)}>Ouvrir {orderBlock.numero}</button>
           </div>
         </div>
       ) : null}

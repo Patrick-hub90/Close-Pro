@@ -2,13 +2,12 @@ import type { Order } from '../types'
 import { fcfa, hms, hm, telLink, waLink, isLate } from '../lib'
 
 function Timer({ o, now, paused, owner }: { o: Order; now: number; paused?: boolean; owner?: boolean }) {
-  // Vue propriétaire : affichage calme (heure cible figée), sans compte à rebours ni urgence.
-  // Un « - » devant l'heure signale qu'elle est déjà dépassée (sinon, grisé, on ne voit pas la différence).
+  // Vue propriétaire : horodatage uniquement pour un vrai rappel programmé (pas pour
+  // l'échéance de 10 min d'une nouvelle commande « à appeler »). Un « - » signale l'heure dépassée.
   if (owner) {
-    const t = o.rappelAt ?? o.deadline
-    if (!t) return null
-    const over = now > t
-    return <span className={`chip muted ${over ? 'over' : ''}`}><i className="ti ti-clock" aria-hidden="true" /> {over ? '-' : ''}{hm(t)}</span>
+    if (!o.rappelAt) return null
+    const over = now > o.rappelAt
+    return <span className={`chip muted ${over ? 'over' : ''}`}><i className="ti ti-clock" aria-hidden="true" /> {over ? '-' : ''}{hm(o.rappelAt)}</span>
   }
   // Rappel / injoignable / reporté programmé : vrai décompte vers l'heure cible.
   if ((o.statut === 'a_rappeler' || o.statut === 'injoignable' || o.statut === 'reporte') && o.rappelAt) {

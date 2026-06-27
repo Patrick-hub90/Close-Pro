@@ -75,12 +75,17 @@ export function isLate(o: Order, now: number): boolean {
   return false
 }
 
+// Statuts qui portent un horaire (rappel) : à rappeler, injoignable, sur WhatsApp.
+const PLANIFIES: Order['statut'][] = ['a_rappeler', 'injoignable', 'whatsapp']
+
 export function matchFiltre(o: Order, f: FiltreId, now: number, working = true): boolean {
   if (TERMINAUX.includes(o.statut)) return f === 'toutes'
   if (LIVRAISON_PIPELINE.includes(o.statut)) return f === 'livraisons' || f === 'toutes'
   switch (f) {
     case 'a_appeler': return (o.statut === 'a_appeler' || o.statut === 'injoignable') && !o.rappelAt
-    case 'rappels': return !!o.rappelAt && (o.statut === 'a_rappeler' || o.statut === 'a_appeler' || o.statut === 'injoignable')
+    // Un rappel n'apparaît dans "Rappels" que tant que l'heure n'est pas passée.
+    // Une fois l'heure dépassée il bascule dans "En retard".
+    case 'rappels': return !!o.rappelAt && now < o.rappelAt && PLANIFIES.includes(o.statut)
     case 'retard': return working && isLate(o, now)
     case 'livraisons': return false
     case 'toutes': return true

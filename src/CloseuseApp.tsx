@@ -9,6 +9,7 @@ import CallMode from './components/CallMode'
 import MorningSas from './components/MorningSas'
 import Compte from './components/Compte'
 import Classement from './components/Classement'
+import Finance from './components/Finance'
 
 const FILTRES: { id: FiltreId; label: string }[] = [
   { id: 'a_appeler', label: 'À appeler' },
@@ -50,7 +51,7 @@ function SkeletonList() {
   )
 }
 
-type Tab = 'appels' | 'moi'
+type Tab = 'appels' | 'finance' | 'moi'
 
 export default function CloseuseApp({
   onSwitchRole, live, agent,
@@ -160,6 +161,19 @@ export default function CloseuseApp({
   const isArchive = viewFiltre === 'archivees'
   const displayList = isArchive ? archived : liste
 
+  // Mini tableau de bord des archives (livré / annulé-refus).
+  const archStats = useMemo(() => {
+    let livre = 0, annule = 0
+    for (const o of archived) { if (o.statut === 'livre') livre++; else annule++ }
+    return { livre, annule, total: archived.length }
+  }, [archived])
+
+  // Sélection globale (« tout sélectionner »).
+  const allSelected = displayList.length > 0 && displayList.every((o) => selected.has(o.id))
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(displayList.map((o) => o.id)))
+  }
+
   // Classement des closeuses (propriétaire) : ponctualité sur les commandes actives du pays sélectionné.
   const classement = useMemo(() => {
     if (!isOwner) return []
@@ -202,11 +216,13 @@ export default function CloseuseApp({
     if (!ids.length) return
     const nowMs = Date.now()
     setOrders((prev) => prev.map((x) => (ids.includes(x.id)
-      ? { ...x, statut, confirmeAt: statut === 'confirme' ? (x.confirmeAt ?? nowMs) : x.confirmeAt } : x)))
+      ? { ...x, statut, confirmeAt: statut === 'confirme' ? (x.confirmeAt ?? nowMs) : x.confirmeAt, livreAt: statut === 'livre' ? nowMs : x.livreAt } : x)))
     if (live && supabase) {
       const patch: Record<string, any> = { statut }
       if (statut === 'confirme') patch.confirme_at = new Date(nowMs).toISOString()
+      if (statut === 'livre') patch.livre_at = new Date(nowMs).toISOString()
       void supabase.from('orders').update(patch).in('id', ids)
+      void supabase.from('call_attempts').insert(ids.map((id) => ({ order_id: id, agent_id: agent?.id ?? null, canal: 'masse', resultat: statut })))
     }
     exitSelect()
   }
@@ -220,7 +236,7 @@ export default function CloseuseApp({
     // Un rappel n'est pertinent que pour "à rappeler" / "injoignable". Tout autre
     // résultat (confirmé, whatsapp, refus…) clôt le rappel : on l'efface, sinon la
     // commande reste coincée dans l'onglet Rappels.
-    const keepRappel = r.statut === 'a_rappeler' || r.statut === 'injoignable'
+    const keepRappel = r.statut === 'a_rappeler' || r.statut === 'injoignable' || r.statut === 'whatsapp'
     // Date de confirmation : posée une seule fois, sert à la revue de livraison du lendemain.
     const confirmeAt = r.statut === 'confirme' ? (o.confirmeAt ?? Date.now()) : o.confirmeAt
 
@@ -260,12 +276,26 @@ export default function CloseuseApp({
   // Clôture du matin : livré -> archivé, annulé -> archivé, reporté -> reste en livraison.
   function resolveSas(orderId: string, issue: 'livre' | 'annule' | 'reporte') {
     const statut: Statut = issue === 'livre' ? 'livre' : issue === 'annule' ? 'annule' : 'livraison'
-    setOrders((prev) => prev.map((x) => (x.id === orderId ? { ...x, statut } : x)))
+    const nowMs = Date.now()
+    setOrders((prev) => prev.map((x) => (x.id === orderId ? { ...x, statut, livreAt: statut === 'livre' ? nowMs : x.livreAt } : x)))
     if (live && supabase) {
-      supabase.from('orders').update({ statut }).eq('id', orderId).then(({ error }) => {
+      const patch: Record<string, any> = { statut }
+      if (statut === 'livre') patch.livre_at = new Date(nowMs).toISOString()
+      supabase.from('orders').update(patch).eq('id', orderId).then(({ error }) => {
         if (error) console.error('[Close-Pro] clôture livraison échouée:', error.message)
       })
+      void supabase.from('call_attempts').insert({ order_id: orderId, agent_id: agent?.id ?? null, canal: 'livraison', resultat: statut })
     }
+  }
+
+  // Saisie du coût de livraison manquant depuis le SAS (obligatoire avant « livré »).
+  function setSasCost(orderId: string, cout: number) {
+    setOrders((prev) => prev.map((x) => {
+      if (x.id !== orderId) return x
+      const base = (x.prixNegocie ?? x.prixUnitaire) * x.quantite
+      return { ...x, coutLivraison: cout, total: base + cout }
+    }))
+    if (live && supabase) void supabase.from('orders').update({ cout_livraison: cout }).eq('id', orderId)
   }
 
   if (call) {
@@ -274,7 +304,7 @@ export default function CloseuseApp({
 
   const showSas = tab === 'appels' && !sasDone && sasOrders.length > 0
   if (showSas) {
-    return <div className="app"><MorningSas orders={sasOrders} onDone={() => setSasDone(true)} onResolve={resolveSas} /></div>
+    return <div className="app"><MorningSas orders={sasOrders} onDone={() => setSasDone(true)} onResolve={resolveSas} onSetCost={setSasCost} /></div>
   }
 
   const emptySub = filtre === 'a_appeler' ? 'Aucune commande à appeler pour le moment.'
@@ -360,11 +390,25 @@ export default function CloseuseApp({
 
           <div className="listbar">
             {selectMode ? (
-              <><span>{selected.size} sélectionnée(s)</span><button onClick={exitSelect}>Annuler</button></>
+              <>
+                <span>{selected.size} sélectionnée(s)</span>
+                <div className="lb-acts">
+                  <button onClick={toggleAll}>{allSelected ? 'Tout désélectionner' : 'Tout sélectionner'}</button>
+                  <button onClick={exitSelect}>Annuler</button>
+                </div>
+              </>
             ) : (
               !isArchive && displayList.length > 0 ? <button onClick={() => setSelectMode(true)}><i className="ti ti-checkbox" aria-hidden="true" /> Sélectionner</button> : <span />
             )}
           </div>
+
+          {isArchive ? (
+            <div className="archdash">
+              <div className="ad-k ok"><b>{archStats.livre}</b><span>Livré</span></div>
+              <div className="ad-k dang"><b>{archStats.annule}</b><span>Annulé / Refus</span></div>
+              <div className="ad-k"><b>{archStats.total}</b><span>Total archivé</span></div>
+            </div>
+          ) : null}
 
           {loading && !isArchive ? (
             <SkeletonList />
@@ -406,6 +450,12 @@ export default function CloseuseApp({
         </>
       )}
 
+      {tab === 'finance' && (
+        isOwner ? <Finance pays={selectedPays} /> : (
+          <div className="empty"><i className="ti ti-lock" aria-hidden="true" /><div className="empty-t">Réservé au propriétaire</div></div>
+        )
+      )}
+
       {tab === 'moi' && (live ? (
         <>
           {isOwner ? <Classement rows={classement} /> : null}
@@ -425,6 +475,7 @@ export default function CloseuseApp({
       <nav className="nav">
         <div className="nav-inner">
           <button className={tab === 'appels' ? 'on' : ''} onClick={() => setTab('appels')}><i className="ti ti-phone" aria-hidden="true" />Appels</button>
+          {isOwner ? <button className={tab === 'finance' ? 'on' : ''} onClick={() => setTab('finance')}><i className="ti ti-cash-banknote" aria-hidden="true" />Finance</button> : null}
           <button className={tab === 'moi' ? 'on' : ''} onClick={() => setTab('moi')}><i className="ti ti-user" aria-hidden="true" />Moi</button>
         </div>
       </nav>

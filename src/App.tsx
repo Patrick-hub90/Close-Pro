@@ -5,9 +5,20 @@ import { supabase, supabaseEnabled, getAgent, type Agent } from './lib/supabase'
 
 type Mode = 'loading' | 'login' | 'live' | 'noconfig'
 
+function useOnline(): boolean {
+  const [online, setOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine)
+  useEffect(() => {
+    const up = () => setOnline(true), down = () => setOnline(false)
+    window.addEventListener('online', up); window.addEventListener('offline', down)
+    return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
+  }, [])
+  return online
+}
+
 export default function App() {
   const [mode, setMode] = useState<Mode>('loading')
   const [agent, setAgent] = useState<Agent | null>(null)
+  const online = useOnline()
 
   useEffect(() => {
     if (!supabaseEnabled || !supabase) { setMode('noconfig'); return }
@@ -32,6 +43,19 @@ export default function App() {
 
   const logout = () => supabase?.auth.signOut()
 
+  // Hors-ligne : si rien n'a encore pu charger, on explique pourquoi l'écran est vide.
+  if (!online && (mode === 'loading' || mode === 'login')) {
+    return (
+      <div className="app">
+        <div className="boot-err offline">
+          <i className="ti ti-wifi-off" aria-hidden="true" />
+          <h3>Pas de connexion internet</h3>
+          <p>Close-Pro a besoin d'internet pour charger tes commandes. Vérifie ta connexion (Wi-Fi ou données mobiles) — l'application se rechargera automatiquement dès le retour du réseau.</p>
+        </div>
+      </div>
+    )
+  }
+
   if (mode === 'loading') {
     return <div className="app"><div className="boot-load"><span className="spinner" /><p>Connexion…</p></div></div>
   }
@@ -54,5 +78,12 @@ export default function App() {
       </div>
     )
   }
-  return <CloseuseApp live agent={agent} onSwitchRole={logout} />
+  return (
+    <>
+      {!online ? (
+        <div className="offline-bar"><i className="ti ti-wifi-off" aria-hidden="true" /> Hors ligne — les changements seront perdus tant que le réseau n'est pas revenu.</div>
+      ) : null}
+      <CloseuseApp live agent={agent} onSwitchRole={logout} />
+    </>
+  )
 }

@@ -86,6 +86,7 @@ create table if not exists orders (
   is_duplicate_suspect boolean not null default false,
   dernier_commentaire text,
   confirme_at   timestamptz,                -- date de confirmation (revue de livraison le lendemain)
+  livre_at      timestamptz,                -- date de livraison (finance par periode)
   date_commande timestamptz,
   extra         jsonb default '{}'::jsonb,  -- colonnes variables du sheet
   created_at    timestamptz not null default now(),

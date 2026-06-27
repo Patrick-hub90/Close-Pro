@@ -267,14 +267,27 @@ export default function CloseuseApp({
     const confirmeAt = (r.statut === 'confirme' || r.statut === 'livre') ? (o.confirmeAt ?? nowMs) : o.confirmeAt
     const livreAt = r.statut === 'livre' ? (o.livreAt ?? nowMs) : o.livreAt
 
-    setOrders((prev) => prev.map((x) => (x.id === o.id ? {
+    // Applique la mise à jour ; gère le va-et-vient entre liste active et archive
+    // (ex. une commande « livrée » qu'on repasse en « à rappeler » revient dans l'actif).
+    const apply = (x: Order): Order => ({
       ...x, statut: r.statut, tentatives: newTent, total, confirmeAt, livreAt,
       prixNegocie: r.prixNegocie ?? x.prixNegocie, coutLivraison: r.coutLivraison ?? x.coutLivraison,
       produit: r.produit ?? x.produit, quantite: qte, adresse: r.adresse ?? x.adresse,
       commentaire: r.commentaire ?? x.commentaire,
       rappelAt: keepRappel ? (r.rappelAt ?? x.rappelAt) : undefined,
       rappelLieu: keepRappel ? (r.rappelLieu ?? x.rappelLieu) : undefined,
-    } : x)))
+    })
+    const estTerminal = r.statut === 'livre' || r.statut === 'annule' || r.statut === 'refuse'
+    setOrders((prev) => {
+      const exists = prev.some((x) => x.id === o.id)
+      if (estTerminal) return exists ? prev.filter((x) => x.id !== o.id) : prev
+      return exists ? prev.map((x) => (x.id === o.id ? apply(x) : x)) : [apply(o), ...prev]
+    })
+    setArchived((prev) => {
+      const exists = prev.some((x) => x.id === o.id)
+      if (estTerminal) return exists ? prev.map((x) => (x.id === o.id ? apply(x) : x)) : [apply(o), ...prev]
+      return exists ? prev.filter((x) => x.id !== o.id) : prev
+    })
 
     if (live && supabase) {
       const db: Record<string, any> = { statut: r.statut, tentatives: newTent, total, produit_nom: r.produit ?? o.produit, quantite: qte }

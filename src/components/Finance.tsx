@@ -23,22 +23,6 @@ function bornes(p: Periode, from: string, to: string): [number, number] {
   return [deb.getTime(), fin.getTime()]
 }
 
-// Agrège le CA par heure (aujourd'hui) ou par jour (périodes plus longues).
-function buildBars(lignes: Ligne[], periode: Periode): { label: string; value: number }[] {
-  const map = new Map<number, { label: string; value: number; sort: number }>()
-  for (const l of lignes) {
-    const d = new Date(l.at)
-    let key: number, label: string, sort: number
-    if (periode === 'jour') { key = d.getHours(); label = `${key}h`; sort = key } else {
-      const day = new Date(d); day.setHours(0, 0, 0, 0); key = day.getTime()
-      label = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`; sort = key
-    }
-    const cur = map.get(key) || { label, value: 0, sort }
-    cur.value += l.recu; map.set(key, cur)
-  }
-  return [...map.values()].sort((a, b) => a.sort - b.sort).map(({ label, value }) => ({ label, value }))
-}
-
 function Finance({ pays }: { pays?: string }) {
   const [periode, setPeriode] = useState<Periode>('jour')
   const today = isoDay(new Date())
@@ -81,9 +65,6 @@ function Finance({ pays }: { pays?: string }) {
     const nb = lignes.length
     return { cout, recu, net: recu - cout, nb, panier: nb ? Math.round(recu / nb) : 0 }
   }, [lignes])
-  const bars = useMemo(() => buildBars(lignes, periode), [lignes, periode])
-  const maxBar = Math.max(1, ...bars.map((b) => b.value))
-  const showLabels = bars.length <= 12
 
   return (
     <div className="fin">
@@ -112,22 +93,6 @@ function Finance({ pays }: { pays?: string }) {
         <div className="fs net"><span>Net (reçu − livraison)</span><b>{fcfa(tot.net)}</b></div>
         <div className="fs"><span>Frais de livraison</span><b>{fcfa(tot.cout)}</b></div>
       </div>
-
-      {/* Évolution */}
-      {bars.length > 0 ? (
-        <div className="fin-chart">
-          <div className="fc-h">Évolution du CA</div>
-          <div className="fc-bars">
-            {bars.map((b, i) => (
-              <div className="fc-col" key={i}>
-                {showLabels ? <span className="fc-val">{b.value ? Math.round(b.value / 1000) + 'k' : ''}</span> : null}
-                <div className="fc-bar" style={{ height: `${Math.max(2, Math.round(b.value / maxBar * 100))}%` }} />
-              </div>
-            ))}
-          </div>
-          {showLabels ? <div className="fc-lbls">{bars.map((b, i) => <span key={i}>{b.label}</span>)}</div> : null}
-        </div>
-      ) : null}
 
       {/* Tableau */}
       {loading ? (

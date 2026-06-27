@@ -68,6 +68,7 @@ export default function CloseuseApp({
   const [sasDone, setSasDone] = useState(false)
   const [call, setCall] = useState<{ queue: Order[]; index: number } | null>(null)
   const [selectMode, setSelectMode] = useState(false)
+  const [blockLate, setBlockLate] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [archived, setArchived] = useState<Order[]>([])
   const [selectedPays, setSelectedPays] = useState('')
@@ -205,11 +206,15 @@ export default function CloseuseApp({
   const score = counts.toutes ? Math.round(100 * (1 - counts.retard / counts.toutes)) : 100
   const scoreCls = score >= 85 ? '' : score >= 60 ? 'mid' : 'low'
 
+  // Discipline d'appel : tant qu'il reste des retards (en horaires), on doit les
+  // traiter avant d'ouvrir une nouvelle commande qui n'est pas elle-même en retard.
   function openAt(o: Order) {
+    if (workingNow && counts.retard > 0 && !isLate(o, now)) { setBlockLate(true); return }
     const i = displayList.findIndex((x) => x.id === o.id)
     setCall({ queue: displayList, index: Math.max(0, i) })
   }
   function startQueue() {
+    if (workingNow && counts.retard > 0 && viewFiltre !== 'retard') { setBlockLate(true); return }
     if (liste.length) setCall({ queue: liste, index: 0 })
   }
   function toggleSelect(id: string) {
@@ -489,6 +494,18 @@ export default function CloseuseApp({
           <button className={tab === 'moi' ? 'on' : ''} onClick={() => setTab('moi')}><i className="ti ti-user" aria-hidden="true" />Moi</button>
         </div>
       </nav>
+
+      {/* Fenêtre : appeler les retards d'abord */}
+      {blockLate ? (
+        <div className="err-overlay" onClick={() => setBlockLate(false)}>
+          <div className="errbox" onClick={(e) => e.stopPropagation()}>
+            <i className="ti ti-alert-triangle" aria-hidden="true" />
+            <h3>Appelle d'abord les retards</h3>
+            <p>Il reste <b>{counts.retard}</b> commande{counts.retard > 1 ? 's' : ''} en retard. Traite-les avant d'appeler une nouvelle commande.</p>
+            <button onClick={() => { setFiltre('retard'); setSelectMode(false); setBlockLate(false) }}>Voir les retards</button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -46,6 +46,7 @@ const STATUT_INFO: Record<Order['statut'], { label: string; tone: string }> = {
   a_appeler: { label: 'À appeler', tone: '' },
   a_rappeler: { label: 'À rappeler', tone: 'info' },
   injoignable: { label: 'Injoignable', tone: 'warn' },
+  reporte: { label: 'Reporté', tone: 'info' },
   confirme: { label: 'Confirmé', tone: 'ok' },
   whatsapp: { label: 'WhatsApp', tone: 'ok' },
   refuse: { label: 'Refus', tone: 'dang' },

@@ -2,6 +2,7 @@ export type Statut =
   | 'a_appeler'
   | 'a_rappeler'
   | 'injoignable'
+  | 'reporte'
   | 'confirme'
   | 'whatsapp'
   | 'refuse'

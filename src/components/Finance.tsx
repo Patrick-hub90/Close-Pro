@@ -40,12 +40,14 @@ export default function Finance({ pays }: { pays?: string }) {
     if (!supabase) { setLoading(false); return }
     let active = true
     setLoading(true); setErr(null)
+    // Attribution : une vente compte pour son jour de CONFIRMATION (la veille de la
+    // clôture du matin), pas pour le moment où on coche « Livré ».
     let q = supabase.from('orders')
-      .select('id, numero, adresse, region, cout_livraison, total, livre_at')
+      .select('id, numero, adresse, region, cout_livraison, total, confirme_at')
       .eq('statut', 'livre')
-      .gte('livre_at', new Date(deb).toISOString())
-      .lte('livre_at', new Date(fin).toISOString())
-      .order('livre_at', { ascending: false })
+      .gte('confirme_at', new Date(deb).toISOString())
+      .lte('confirme_at', new Date(fin).toISOString())
+      .order('confirme_at', { ascending: false })
       .limit(500)
     if (pays) q = q.eq('pays', pays)
     q.then(({ data, error }) => {

@@ -132,11 +132,17 @@ export default function CloseuseApp({
     }
   }, [now, orders, live, workingNow])
 
-  // Revue de livraison du matin : commandes en livraison confirmées AVANT aujourd'hui.
-  // Une commande confirmée le jour même n'y apparaît que le lendemain (la livraison suit).
+  // Revue de livraison du matin : commandes confirmées AVANT aujourd'hui, plus les
+  // reportées dont la date de reprise est arrivée. Une commande confirmée le jour
+  // même n'y apparaît que le lendemain (la livraison suit).
   const startOfToday = useMemo(() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() }, [now])
+  const endOfToday = startOfToday + 86_400_000
   const sasOrders = live
-    ? scoped.filter((o) => (o.statut === 'confirme' || o.statut === 'livraison') && (!o.confirmeAt || o.confirmeAt < startOfToday))
+    ? scoped.filter((o) => {
+        if (o.statut === 'reporte') return !o.rappelAt || o.rappelAt < endOfToday
+        if (o.statut === 'confirme' || o.statut === 'livraison') return !o.confirmeAt || o.confirmeAt < startOfToday
+        return false
+      })
     : LIVRAISONS
 
   const counts = useMemo(() => {
@@ -236,7 +242,7 @@ export default function CloseuseApp({
     // Un rappel n'est pertinent que pour "à rappeler" / "injoignable". Tout autre
     // résultat (confirmé, whatsapp, refus…) clôt le rappel : on l'efface, sinon la
     // commande reste coincée dans l'onglet Rappels.
-    const keepRappel = r.statut === 'a_rappeler' || r.statut === 'injoignable' || r.statut === 'whatsapp'
+    const keepRappel = r.statut === 'a_rappeler' || r.statut === 'injoignable' || r.statut === 'reporte'
     // Date de confirmation : posée une seule fois, sert à la revue de livraison du lendemain.
     const confirmeAt = r.statut === 'confirme' ? (o.confirmeAt ?? Date.now()) : o.confirmeAt
 

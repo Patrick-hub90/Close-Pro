@@ -202,7 +202,6 @@ export default function CallMode({
               <button className="lvb ann" onClick={() => pick({ statut: 'annule', label: 'Annulé', tone: 'dang' })}><i className="ti ti-x" aria-hidden="true" /> Annulé</button>
               <button className="lvb rep" onClick={() => pick({ statut: 'reporte', label: 'Reporté', tone: 'rep', sched: true })}><i className="ti ti-calendar-event" aria-hidden="true" /> Reporté</button>
             </div>
-            {costError ? <div className="lv-err"><i className="ti ti-alert-triangle" aria-hidden="true" /> Renseigne le coût de livraison avant de marquer « Livré ».</div> : null}
           </>
         ) : (
           <>
@@ -304,6 +303,18 @@ export default function CallMode({
             <button className={`sm-ok ${modal.tone}`} disabled={!schedMs} onClick={confirmSched}>
               <i className="ti ti-check" aria-hidden="true" /> Confirmer {schedMs ? `· ${fmtDt(schedMs)}` : ''}
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Fenêtre : coût de livraison obligatoire avant « Livré » */}
+      {costError ? (
+        <div className="err-overlay" onClick={() => setCostError(false)}>
+          <div className="errbox" onClick={(e) => e.stopPropagation()}>
+            <i className="ti ti-alert-triangle" aria-hidden="true" />
+            <h3>Coût de livraison manquant</h3>
+            <p>Renseigne le coût de livraison avant de marquer cette commande « Livré ».</p>
+            <button onClick={() => setCostError(false)}>Compris</button>
           </div>
         </div>
       ) : null}

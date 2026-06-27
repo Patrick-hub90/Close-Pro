@@ -1,71 +1,40 @@
 import type { Order } from '../types'
-import { fcfa, hms, hm, telLink, waLink, isLate } from '../lib'
+import { fcfa, hms, telLink, waLink, isLate } from '../lib'
 
-function Timer({ o, now, paused, owner }: { o: Order; now: number; paused?: boolean; owner?: boolean }) {
-  // Vue propriétaire : horodatage uniquement pour un vrai rappel programmé (pas pour
-  // l'échéance de 10 min d'une nouvelle commande « à appeler »). Un « - » signale l'heure dépassée.
-  if (owner) {
-    if (!o.rappelAt) return null
-    const over = now > o.rappelAt
-    return <span className={`chip muted ${over ? 'over' : ''}`}><i className="ti ti-clock" aria-hidden="true" /> {over ? '-' : ''}{hm(o.rappelAt)}</span>
+// Compte à rebours unique (closeuse ET propriétaire). Tourne vers l'heure cible selon le statut ;
+// passe en « -HH:MM:SS » rouge une fois dépassé (jamais de « + »).
+function Timer({ o, now, paused }: { o: Order; now: number; paused?: boolean }) {
+  let cible: number | undefined
+  let ic = 'ti-clock'
+  if (o.statut === 'a_appeler') { cible = o.deadline; ic = 'ti-clock' }
+  else if (o.statut === 'a_rappeler') { cible = o.rappelAt; ic = 'ti-bell' }
+  else if (o.statut === 'injoignable') { cible = o.rappelAt; ic = 'ti-phone-off' }
+  else if (o.statut === 'reporte') { cible = o.rappelAt; ic = 'ti-calendar-event' }
+  if (!cible) return null
+  if (paused) return <span className="chip muted"><i className="ti ti-player-pause" aria-hidden="true" /> en pause</span>
+  const rem = cible - now
+  if (rem < 0) {
+    return <span className="chip dang"><i className="ti ti-alert-triangle" aria-hidden="true" /> -{hms(-rem)}</span>
   }
-  // Rappel / injoignable / reporté programmé : vrai décompte vers l'heure cible.
-  if ((o.statut === 'a_rappeler' || o.statut === 'injoignable' || o.statut === 'reporte') && o.rappelAt) {
-    if (paused) return <span className="chip muted"><i className="ti ti-player-pause" aria-hidden="true" /> en pause</span>
-    const rem = o.rappelAt - now
-    const ic = o.statut === 'injoignable' ? 'ti-phone-off' : o.statut === 'reporte' ? 'ti-calendar-event' : 'ti-bell'
-    if (rem < 0) {
-      return <span className="chip dang"><i className="ti ti-alert-triangle" aria-hidden="true" /> +{hms(-rem)}</span>
-    }
-    return (
-      <span className={`chip ${rem < 180_000 ? 'warn' : 'info'}`}>
-        <i className={`ti ${ic}`} aria-hidden="true" /> {hms(rem)}
-      </span>
-    )
-  }
-  if (o.statut === 'injoignable') {
-    return (
-      <span className="chip warn">
-        <i className="ti ti-phone-off" aria-hidden="true" />
-        {o.tentatives} tent.
-      </span>
-    )
-  }
-  if (o.deadline) {
-    if (paused) {
-      return <span className="chip muted"><i className="ti ti-player-pause" aria-hidden="true" /> en pause</span>
-    }
-    const rem = o.deadline - now
-    if (rem < 0) {
-      return (
-        <span className="chip dang">
-          <i className="ti ti-alert-triangle" aria-hidden="true" />
-          +{hms(-rem)}
-        </span>
-      )
-    }
-    return (
-      <span className={`chip ${rem < 180_000 ? 'warn' : 'muted'}`}>
-        <i className="ti ti-clock" aria-hidden="true" />
-        {hms(rem)}
-      </span>
-    )
-  }
-  return null
+  return (
+    <span className={`chip ${rem < 180_000 ? 'warn' : 'muted'}`}>
+      <i className={`ti ${ic}`} aria-hidden="true" /> {hms(rem)}
+    </span>
+  )
 }
 
 const STATUT_INFO: Record<Order['statut'], { label: string; tone: string }> = {
-  a_appeler: { label: 'À appeler', tone: '' },
+  a_appeler: { label: 'Nouveau', tone: 'new' },
   a_rappeler: { label: 'À rappeler', tone: 'info' },
   injoignable: { label: 'Injoignable', tone: 'warn' },
-  reporte: { label: 'Reporté', tone: 'info' },
+  reporte: { label: 'Reporté', tone: 'rep' },
   confirme: { label: 'Livraison', tone: 'info' },
   whatsapp: { label: 'WhatsApp', tone: 'ok' },
   refuse: { label: 'Refus', tone: 'dang' },
   ne_reconnait_pas: { label: 'Ne reconnaît pas', tone: '' },
   livraison: { label: 'Livraison', tone: 'info' },
   livre: { label: 'Livré', tone: 'ok' },
-  annule: { label: 'Annulé', tone: '' },
+  annule: { label: 'Annulé', tone: 'dang' },
 }
 
 export default function OrderCard({
@@ -82,9 +51,8 @@ export default function OrderCard({
 }) {
   // Pas de pulsation d'urgence pour le propriétaire (vue de supervision).
   const late = !paused && !owner && isLate(o, now)
-  // Un rappel/injoignable/reporté dont l'heure est passée redevient « à appeler » : la pastille suit.
-  const rappelExpire = (o.statut === 'a_rappeler' || o.statut === 'injoignable' || o.statut === 'reporte') && !!o.rappelAt && now > o.rappelAt
-  const sInfo = rappelExpire ? { label: 'À appeler', tone: '' } : (STATUT_INFO[o.statut] ?? { label: o.statut, tone: '' })
+  // La pastille reflète toujours la nature réelle du statut (un rappel dépassé garde « À rappeler »).
+  const sInfo = STATUT_INFO[o.statut] ?? { label: o.statut, tone: '' }
   return (
     <div
       className={`card ${late ? 'late' : ''} ${selectMode ? 'selecting' : ''} ${selected ? 'selected' : ''}`}
@@ -95,7 +63,7 @@ export default function OrderCard({
       ) : null}
       <div className="r1">
         <span className="nm">{o.numero}</span>
-        <Timer o={o} now={now} paused={paused} owner={owner} />
+        <Timer o={o} now={now} paused={paused} />
       </div>
       <div className="sub">
         {o.client} · {o.produit}{o.quantite > 1 ? ` · ×${o.quantite}` : ''}

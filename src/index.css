@@ -468,6 +468,8 @@ a { color: inherit; text-decoration: none; }
 .pastille.info { background: var(--blue-bg); color: var(--blue-tx); }
 .pastille.warn { background: var(--amber-bg); color: var(--amber-tx); }
 .pastille.dang { background: var(--red-bg); color: var(--red-tx); }
+.pastille.new { background: var(--orange-bg); color: var(--orange-tx); }
+.pastille.rep { background: #EEEDFE; color: #3C3489; }
 .card-comment { margin-top: 8px; font-size: 12px; color: var(--text-2); background: var(--surface-2); border-radius: var(--radius-sm); padding: 7px 9px; display: flex; gap: 6px; align-items: flex-start; line-height: 1.4; }
 .card-comment .ti { color: var(--text-3); margin-top: 1px; flex: none; }
 
@@ -635,6 +637,7 @@ a { color: inherit; text-decoration: none; }
 .call-head .ch-pen.on { background: var(--navy); color: #fff; border-color: transparent; }
 .ch-stat.rep { background: #EEEDFE; color: #3C3489; }
 .ch-stat.liv { background: #E1F5EE; color: #0F6E56; }
+.ch-stat.new { background: var(--orange-bg); color: var(--orange-tx); }
 .edit-top { margin-top: 12px; }
 
 .res-h { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin: 18px 0 10px; }

@@ -3,7 +3,7 @@ import type { Order, Statut, CallResult } from '../types'
 import { fcfa, telLink, waLink } from '../lib'
 import { supabase } from '../lib/supabase'
 
-type Tone = 'ok' | 'info' | 'rep' | 'warn' | 'wa' | 'dang' | 'liv'
+type Tone = 'ok' | 'info' | 'rep' | 'warn' | 'wa' | 'dang' | 'liv' | 'new'
 const RESULTATS: { statut: Statut; label: string; icon: string; tone: Tone; sched?: boolean }[] = [
   { statut: 'confirme', label: 'Confirmé', icon: 'ti-check', tone: 'ok' },
   { statut: 'a_rappeler', label: 'À rappeler', icon: 'ti-calendar-clock', tone: 'info', sched: true },
@@ -15,12 +15,12 @@ const RESULTATS: { statut: Statut; label: string; icon: string; tone: Tone; sche
 ]
 
 const STATUT_LABELS: Record<string, string> = {
-  a_appeler: 'À appeler', a_rappeler: 'À rappeler', injoignable: 'Injoignable', reporte: 'Reporté',
+  a_appeler: 'Nouveau', a_rappeler: 'À rappeler', injoignable: 'Injoignable', reporte: 'Reporté',
   confirme: 'Livraison', whatsapp: 'WhatsApp', refuse: 'Refus',
   ne_reconnait_pas: 'Ne reconnaît pas', livraison: 'En livraison', livre: 'Livré', annule: 'Annulé',
 }
 const TONE_OF: Record<string, Tone> = {
-  confirme: 'info', a_rappeler: 'info', reporte: 'rep', injoignable: 'warn',
+  a_appeler: 'new', confirme: 'info', a_rappeler: 'info', reporte: 'rep', injoignable: 'warn',
   whatsapp: 'wa', annule: 'dang', livre: 'liv', livraison: 'info', refuse: 'dang',
 }
 
@@ -107,10 +107,9 @@ export default function CallMode({
   const extraEntries = o.extra
     ? Object.entries(o.extra).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
     : []
-  // Un rappel/injoignable/reporté dont l'heure est passée s'affiche « À appeler ».
-  const rappelExpire = (o.statut === 'a_rappeler' || o.statut === 'injoignable' || o.statut === 'reporte') && !!o.rappelAt && Date.now() > o.rappelAt
-  const pillTone = rappelExpire ? '' : (TONE_OF[o.statut] ?? '')
-  const pillLabel = rappelExpire ? 'À appeler' : (STATUT_LABELS[o.statut] ?? o.statut)
+  // La pastille du header reflète toujours la nature réelle du statut.
+  const pillTone = TONE_OF[o.statut] ?? ''
+  const pillLabel = STATUT_LABELS[o.statut] ?? o.statut
   const waText = `Bonjour ${o.client}, confirmation de votre commande ${o.numero} : ${produit}${qte > 1 ? ` (x${qte})` : ''} pour ${fcfa(total, false)}. Pouvez-vous confirmer la livraison ? Merci.`
   const schedMs = fromLocalInput(schedAt)
   const histCount = hist.length + (o.createdAt ? 1 : 0)

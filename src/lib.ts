@@ -70,8 +70,9 @@ const LIVRAISON_PIPELINE: Order['statut'][] = ['confirme', 'livraison']
 
 export function isLate(o: Order, now: number): boolean {
   if (TERMINAUX.includes(o.statut) || LIVRAISON_PIPELINE.includes(o.statut)) return false
-  if (o.rappelAt && now > o.rappelAt) return true
-  if (o.deadline && o.statut === 'a_appeler' && !o.rappelAt && now > o.deadline) return true
+  // Seules les NOUVELLES commandes (sans rappel) tombent « en retard » sur leur délai de 10 min.
+  // Un rappel dont l'heure passe ne devient PAS « en retard » : il redevient « à appeler ».
+  if (o.statut === 'a_appeler' && !o.rappelAt && o.deadline && now > o.deadline) return true
   return false
 }
 
@@ -81,11 +82,14 @@ const PLANIFIES: Order['statut'][] = ['a_rappeler', 'injoignable', 'reporte']
 export function matchFiltre(o: Order, f: FiltreId, now: number, working = true): boolean {
   if (TERMINAUX.includes(o.statut)) return f === 'toutes'
   if (LIVRAISON_PIPELINE.includes(o.statut)) return f === 'livraisons' || f === 'toutes'
+  // Rappel dont l'heure est passée -> il quitte "Rappels" et redevient "À appeler".
+  const rappelExpire = PLANIFIES.includes(o.statut) && !!o.rappelAt && now >= o.rappelAt
   switch (f) {
-    case 'a_appeler': return (o.statut === 'a_appeler' || o.statut === 'injoignable') && !o.rappelAt
+    case 'a_appeler':
+      if (rappelExpire) return true
+      return o.statut === 'a_appeler' && !o.rappelAt && !(working && isLate(o, now))
     // Un rappel n'apparaît dans "Rappels" que tant que l'heure n'est pas passée.
-    // Une fois l'heure dépassée il bascule dans "En retard".
-    case 'rappels': return !!o.rappelAt && now < o.rappelAt && PLANIFIES.includes(o.statut)
+    case 'rappels': return PLANIFIES.includes(o.statut) && !!o.rappelAt && now < o.rappelAt
     case 'retard': return working && isLate(o, now)
     case 'livraisons': return false
     case 'discussion': return o.statut === 'whatsapp'

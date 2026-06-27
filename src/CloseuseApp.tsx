@@ -70,9 +70,6 @@ export default function CloseuseApp({
   const [selectMode, setSelectMode] = useState(false)
   const [blockLate, setBlockLate] = useState(false)
   const [orderBlock, setOrderBlock] = useState<Order | null>(null)
-  // Commandes qu'on vient de traiter : restent visibles dans la liste courante (ne « disparaissent »
-  // pas) même si leur nouveau statut ne correspond plus au filtre — jusqu'au changement d'onglet.
-  const [stickyIds, setStickyIds] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [archived, setArchived] = useState<Order[]>([])
   const [selectedPays, setSelectedPays] = useState('')
@@ -123,9 +120,6 @@ export default function CloseuseApp({
     supabase.from('agents').select('id, nom, pays').eq('role', 'closer').then(({ data }) => setClosers((data as { id: string; nom: string; pays: string | null }[]) ?? []))
   }, [live, agent])
 
-  // En changeant d'onglet (ou de pays), on repart d'une liste propre : on oublie le « sticky ».
-  useEffect(() => { setStickyIds(new Set()) }, [filtre, selectedPays])
-
   // Moteur de contrainte : alerte (vibration + bip) quand une commande passe en retard.
   const notifiedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
@@ -164,8 +158,8 @@ export default function CloseuseApp({
   const viewFiltre: FiltreId = lockLate ? 'a_appeler' : filtre
 
   const liste = useMemo(
-    () => scoped.filter((o) => matchFiltre(o, viewFiltre, now, workingNow) || stickyIds.has(o.id)).sort(byUrgence(now)),
-    [scoped, viewFiltre, now, workingNow, stickyIds]
+    () => scoped.filter((o) => matchFiltre(o, viewFiltre, now, workingNow)).sort(byUrgence(now)),
+    [scoped, viewFiltre, now, workingNow]
   )
   const isArchive = viewFiltre === 'archivees'
   const displayList = isArchive ? archived : liste
@@ -269,9 +263,8 @@ export default function CloseuseApp({
     const cout = r.coutLivraison ?? o.coutLivraison ?? 0
     const total = Math.round(prix) * qte + Math.round(cout)
     const newTent = r.statut === 'injoignable' ? o.tentatives + 1 : o.tentatives
-    // Un rappel n'est pertinent que pour "à rappeler" / "injoignable". Tout autre
-    // résultat (confirmé, whatsapp, refus…) clôt le rappel : on l'efface, sinon la
-    // commande reste coincée dans l'onglet Rappels.
+    // Un rappel n'est pertinent que pour "à rappeler" / "injoignable" / "reporté". Tout autre
+    // résultat (confirmé, whatsapp, livré…) n'a pas d'horaire : on efface l'horodatage.
     const keepRappel = r.statut === 'a_rappeler' || r.statut === 'injoignable' || r.statut === 'reporte'
     const nowMs = Date.now()
     // Confirmé OU livré → pose une date de confirmation (la vente compte pour ce jour).
@@ -323,8 +316,6 @@ export default function CloseuseApp({
       if (r.rappelAt) void supabase.from('scheduled_callbacks').insert({ order_id: o.id, agent_id: agent?.id ?? null, rappel_at: new Date(r.rappelAt).toISOString(), lieu: r.rappelLieu ?? null, motif: r.statut })
     }
 
-    // La commande reste visible dans la liste courante (sticky) malgré son changement de statut.
-    setStickyIds((prev) => new Set(prev).add(o.id))
     // Pas d'enchaînement automatique : on revient à la liste, l'utilisateur choisit la suivante.
     setCall(null)
   }

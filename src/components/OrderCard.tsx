@@ -3,10 +3,12 @@ import { fcfa, hms, hm, telLink, waLink, isLate } from '../lib'
 
 function Timer({ o, now, paused, owner }: { o: Order; now: number; paused?: boolean; owner?: boolean }) {
   // Vue propriétaire : affichage calme (heure cible figée), sans compte à rebours ni urgence.
+  // Un « - » devant l'heure signale qu'elle est déjà dépassée (sinon, grisé, on ne voit pas la différence).
   if (owner) {
     const t = o.rappelAt ?? o.deadline
     if (!t) return null
-    return <span className="chip muted"><i className="ti ti-clock" aria-hidden="true" /> {hm(t)}</span>
+    const over = now > t
+    return <span className={`chip muted ${over ? 'over' : ''}`}><i className="ti ti-clock" aria-hidden="true" /> {over ? '-' : ''}{hm(t)}</span>
   }
   // Rappel / injoignable / reporté programmé : vrai décompte vers l'heure cible.
   if ((o.statut === 'a_rappeler' || o.statut === 'injoignable' || o.statut === 'reporte') && o.rappelAt) {

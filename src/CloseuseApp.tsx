@@ -14,7 +14,6 @@ import Finance from './components/Finance'
 const FILTRES: { id: FiltreId; label: string }[] = [
   { id: 'a_appeler', label: 'À appeler' },
   { id: 'rappels', label: 'Rappels' },
-  { id: 'retard', label: 'En retard' },
   { id: 'livraisons', label: 'Livraisons' },
   { id: 'discussion', label: 'En discussion' },
   { id: 'toutes', label: 'Toutes' },
@@ -144,7 +143,8 @@ export default function CloseuseApp({
 
   const counts = useMemo(() => {
     const c: Record<FiltreId, number> = { a_appeler: 0, rappels: 0, retard: 0, livraisons: 0, discussion: 0, toutes: 0, archivees: 0 }
-    for (const o of scoped) for (const f of FILTRES) if (matchFiltre(o, f.id, now, workingNow)) c[f.id]++
+    const ids = Object.keys(c) as FiltreId[] // inclut 'retard' (calcul interne), même sans onglet
+    for (const o of scoped) for (const f of ids) if (matchFiltre(o, f, now, workingNow)) c[f]++
     return c
   }, [scoped, now, workingNow])
   const etat = useMemo(() => {
@@ -155,7 +155,7 @@ export default function CloseuseApp({
 
   // Verrou de file : une closeuse, en horaires, avec des retards -> doit les traiter d'abord.
   const lockLate = !!live && !isOwner && workingNow && !selectMode && counts.retard > 0
-  const viewFiltre: FiltreId = lockLate ? 'retard' : filtre
+  const viewFiltre: FiltreId = lockLate ? 'a_appeler' : filtre
 
   const liste = useMemo(
     () => scoped.filter((o) => matchFiltre(o, viewFiltre, now, workingNow)).sort(byUrgence(now)),
@@ -415,7 +415,7 @@ export default function CloseuseApp({
 
           <div className="seg">
             {FILTRES.map((f) => {
-              const blocked = lockLate && f.id !== 'retard'
+              const blocked = lockLate && f.id !== 'a_appeler'
               return (
                 <button key={f.id} disabled={blocked}
                   className={`${viewFiltre === f.id ? 'on' : ''} ${f.id === 'retard' ? 'alert' : ''} ${blocked ? 'locked' : ''}`}
@@ -436,7 +436,7 @@ export default function CloseuseApp({
               <span><b>{counts.retard} commande{counts.retard > 1 ? 's' : ''} en retard.</b> Traite-les d'abord — les autres listes sont verrouillées tant qu'il reste du retard.</span>
             </div>
           ) : counts.retard > 0 && !selectMode ? (
-            <button className="latebar" onClick={() => setFiltre('retard')}>
+            <button className="latebar" onClick={() => setFiltre('a_appeler')}>
               <i className="ti ti-alert-triangle" aria-hidden="true" />
               {counts.retard} commande{counts.retard > 1 ? 's' : ''} en retard — à appeler maintenant
               <i className="ti ti-chevron-right" aria-hidden="true" />
@@ -542,7 +542,7 @@ export default function CloseuseApp({
             <i className="ti ti-alert-triangle" aria-hidden="true" />
             <h3>Appelle d'abord les retards</h3>
             <p>Il reste <b>{counts.retard}</b> commande{counts.retard > 1 ? 's' : ''} en retard. Traite-les avant d'appeler une nouvelle commande.</p>
-            <button onClick={() => { setFiltre('retard'); setSelectMode(false); setBlockLate(false) }}>Voir les retards</button>
+            <button onClick={() => { setFiltre('a_appeler'); setSelectMode(false); setBlockLate(false) }}>Voir les commandes à appeler</button>
           </div>
         </div>
       ) : null}

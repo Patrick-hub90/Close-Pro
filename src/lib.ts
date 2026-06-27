@@ -86,8 +86,9 @@ export function matchFiltre(o: Order, f: FiltreId, now: number, working = true):
   const rappelExpire = PLANIFIES.includes(o.statut) && !!o.rappelAt && now >= o.rappelAt
   switch (f) {
     case 'a_appeler':
+      // Nouvelles commandes (à l'heure OU dépassées) + rappels dont l'heure est passée.
       if (rappelExpire) return true
-      return o.statut === 'a_appeler' && !o.rappelAt && !(working && isLate(o, now))
+      return o.statut === 'a_appeler' && !o.rappelAt
     // Un rappel n'apparaît dans "Rappels" que tant que l'heure n'est pas passée.
     case 'rappels': return PLANIFIES.includes(o.statut) && !!o.rappelAt && now < o.rappelAt
     case 'retard': return working && isLate(o, now)

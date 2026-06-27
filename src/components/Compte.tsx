@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { Agent } from '../lib/supabase'
-import { changePassword, createCloseuse } from '../lib/account'
+import { changePassword } from '../lib/account'
+import Closeuses from './Closeuses'
+import Pays from './Pays'
 
 type Msg = { ok?: boolean; txt: string } | null
 
@@ -10,12 +12,6 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
   const [pw, setPw] = useState('')
   const [pwMsg, setPwMsg] = useState<Msg>(null)
   const [pwBusy, setPwBusy] = useState(false)
-
-  const [nom, setNom] = useState('')
-  const [email, setEmail] = useState('')
-  const [cpw, setCpw] = useState('')
-  const [cMsg, setCMsg] = useState<Msg>(null)
-  const [cBusy, setCBusy] = useState(false)
 
   async function savePw(e: React.FormEvent) {
     e.preventDefault()
@@ -27,20 +23,9 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
     if (!error) setPw('')
   }
 
-  async function createC(e: React.FormEvent) {
-    e.preventDefault()
-    if (cpw.length < 6) { setCMsg({ txt: '6 caractères minimum.' }); return }
-    setCBusy(true); setCMsg(null)
-    const { error } = await createCloseuse({ nom, email, password: cpw, pays: agent?.pays || 'CM' })
-    setCBusy(false)
-    if (error) { setCMsg({ txt: error }); return }
-    setCMsg({ ok: true, txt: `Closeuse « ${nom} » créée.` })
-    setNom(''); setEmail(''); setCpw('')
-  }
-
   return (
     <div className="profil compte">
-      <div className="av" style={isOwner ? { background: 'var(--blue-bg)', color: 'var(--blue-tx)' } : undefined}>
+      <div className="av" style={isOwner ? { background: 'var(--navy-bg)', color: 'var(--navy)' } : undefined}>
         {(agent?.nom || '?').slice(0, 2).toUpperCase()}
       </div>
       <h3>{agent?.nom || 'Mon compte'}</h3>
@@ -56,19 +41,8 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
         </form>
       </section>
 
-      {isOwner ? (
-        <section className="acct">
-          <div className="acct-t">Ajouter une closeuse</div>
-          <form onSubmit={createC}>
-            <input type="text" placeholder="Nom" value={nom} onChange={(e) => setNom(e.target.value)} required />
-            <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            <input type="password" placeholder="Mot de passe" value={cpw} onChange={(e) => setCpw(e.target.value)} required />
-            {cMsg ? <div className={cMsg.ok ? 'acct-ok' : 'acct-err'}>{cMsg.txt}</div> : null}
-            <button type="submit" disabled={cBusy}>{cBusy ? 'Création…' : 'Créer le compte'}</button>
-          </form>
-          <div className="acct-hint">Elle se connecte avec cet email + mot de passe (pays : {agent?.pays || 'CM'}).</div>
-        </section>
-      ) : null}
+      {isOwner ? <Closeuses defaultPays={agent?.pays || undefined} /> : null}
+      {isOwner ? <Pays /> : null}
 
       <button className="roleswitch" onClick={onLogout}>
         <i className="ti ti-logout" aria-hidden="true" />Se déconnecter

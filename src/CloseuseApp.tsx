@@ -131,10 +131,10 @@ export default function CloseuseApp({
     }
   }, [now, orders, live, workingNow])
 
-  const sasOrders = live ? scoped.filter((o) => o.statut === 'livraison') : LIVRAISONS
+  const sasOrders = live ? scoped.filter((o) => o.statut === 'confirme' || o.statut === 'livraison') : LIVRAISONS
 
   const counts = useMemo(() => {
-    const c: Record<FiltreId, number> = { a_appeler: 0, rappels: 0, retard: 0, toutes: 0, archivees: 0 }
+    const c: Record<FiltreId, number> = { a_appeler: 0, rappels: 0, retard: 0, livraisons: 0, toutes: 0, archivees: 0 }
     for (const o of scoped) for (const f of FILTRES) if (matchFiltre(o, f.id, now, workingNow)) c[f.id]++
     return c
   }, [scoped, now, workingNow])
@@ -206,13 +206,18 @@ export default function CloseuseApp({
     const cout = r.coutLivraison ?? o.coutLivraison ?? 0
     const total = Math.round(prix) * qte + Math.round(cout)
     const newTent = r.statut === 'injoignable' ? o.tentatives + 1 : o.tentatives
+    // Un rappel n'est pertinent que pour "à rappeler" / "injoignable". Tout autre
+    // résultat (confirmé, whatsapp, refus…) clôt le rappel : on l'efface, sinon la
+    // commande reste coincée dans l'onglet Rappels.
+    const keepRappel = r.statut === 'a_rappeler' || r.statut === 'injoignable'
 
     setOrders((prev) => prev.map((x) => (x.id === o.id ? {
       ...x, statut: r.statut, tentatives: newTent, total,
       prixNegocie: r.prixNegocie ?? x.prixNegocie, coutLivraison: r.coutLivraison ?? x.coutLivraison,
       produit: r.produit ?? x.produit, quantite: qte, adresse: r.adresse ?? x.adresse,
       commentaire: r.commentaire ?? x.commentaire,
-      rappelAt: r.rappelAt ?? x.rappelAt, rappelLieu: r.rappelLieu ?? x.rappelLieu,
+      rappelAt: keepRappel ? (r.rappelAt ?? x.rappelAt) : undefined,
+      rappelLieu: keepRappel ? (r.rappelLieu ?? x.rappelLieu) : undefined,
     } : x)))
 
     if (live && supabase) {
@@ -221,10 +226,12 @@ export default function CloseuseApp({
       if (r.coutLivraison != null) db.cout_livraison = r.coutLivraison
       if (r.adresse != null) db.adresse = r.adresse
       if (r.commentaire) db.dernier_commentaire = r.commentaire
-      if (r.rappelAt) {
+      if (keepRappel && r.rappelAt) {
         const iso = new Date(r.rappelAt).toISOString()
         db.rappel_at = iso; db.rappel_lieu = r.rappelLieu ?? null
         db.appel_deadline = iso; db.appel_deadline_type = 'rappel_programme'
+      } else if (!keepRappel) {
+        db.rappel_at = null; db.rappel_lieu = null
       }
       supabase.from('orders').update(db).eq('id', o.id).then(({ error }) => {
         if (error) console.error('[Close-Pro] update order failed:', error.message, error)
@@ -236,13 +243,24 @@ export default function CloseuseApp({
     setCall((c) => { if (!c) return null; const next = c.index + 1; return next < c.queue.length ? { ...c, index: next } : null })
   }
 
+  // Clôture du matin : livré -> archivé, retour -> annulé, reporté -> reste en livraison.
+  function resolveSas(orderId: string, issue: 'livre' | 'retour' | 'reporte') {
+    const statut: Statut = issue === 'livre' ? 'livre' : issue === 'retour' ? 'annule' : 'livraison'
+    setOrders((prev) => prev.map((x) => (x.id === orderId ? { ...x, statut } : x)))
+    if (live && supabase) {
+      supabase.from('orders').update({ statut }).eq('id', orderId).then(({ error }) => {
+        if (error) console.error('[Close-Pro] clôture livraison échouée:', error.message)
+      })
+    }
+  }
+
   if (call) {
     return <CallMode queue={call.queue} index={call.index} onResult={handleResult} onClose={() => setCall(null)} />
   }
 
   const showSas = tab === 'appels' && !sasDone && sasOrders.length > 0
   if (showSas) {
-    return <div className="app"><MorningSas orders={sasOrders} onDone={() => setSasDone(true)} /></div>
+    return <div className="app"><MorningSas orders={sasOrders} onDone={() => setSasDone(true)} onResolve={resolveSas} /></div>
   }
 
   const emptySub = filtre === 'a_appeler' ? 'Aucune commande à appeler pour le moment.'

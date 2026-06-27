@@ -24,14 +24,19 @@ Récupérer dans **Project Settings → API** : `Project URL`, clé `anon public
   update app_config set value = 'VOTRE_CHAT_ID' where key = 'telegram_chat_id';
   ```
 
-## 3. Google Sheet → Supabase
+## 3. Google Sheet → Supabase (installation 1 clic)
 
 Pour **chaque pays** (un Sheet par pays) :
 
-1. Sheet → **Extensions → Apps Script** → coller `apps-script/Code.gs`.
-2. Renseigner en haut : `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (clé `service_role`), `PAYS` (`CM`/`CI`/`SN`), `FEUILLE`.
-3. Exécuter **une fois** `marquerDepart()` → l'historique existant est ignoré (démarrage à blanc).
-4. **Déclencheurs → Ajouter** → fonction `pushNouvellesCommandes`, événement **« Lors de la modification »** (ou minuté). Chaque nouvelle commande arrive alors dans Supabase et arme le compteur 10 min.
+1. Sheet → **Extensions → Apps Script** → coller tout `apps-script/Code.gs`.
+2. Remplir le bloc **CONFIG** en haut : surtout `SUPABASE_SERVICE_KEY` (clé `service_role`).
+   `SUPABASE_URL` est déjà pré-rempli ; régler `PAYS` (doit exister dans l'app) et, si besoin, `FEUILLE` (vide = premier onglet).
+3. Choisir la fonction **`installer`** dans le menu déroulant en haut → **▷ Exécuter** → autoriser les accès.
+   → teste la connexion, **crée le déclencheur minute tout seul** et ignore l'historique. Plus aucun réglage manuel de déclencheur.
+4. Vérifier dans le menu **« Exécutions »** (icône ⏱) : doit afficher `Test connexion … OK` puis `INSTALLATION TERMINÉE`.
+   En cas d'échec, le message dit quoi corriger (souvent la clé `service_role`), puis relancer `installer`.
+
+Chaque nouvelle ligne du Sheet remonte alors dans l'app **sous 1 min** et arme le compteur 10 min.
 
 ## 4. Le front (l'app)
 
@@ -49,7 +54,7 @@ Pour **chaque pays** (un Sheet par pays) :
 ## Rappels (analyse terrain)
 
 - Pas de preuve d'appel possible en PWA → on mesure la *discipline de saisie* + on croise avec le **taux de livraison**.
-- Sheets sans heure → le « 10 min » démarre à la **détection** (déclencheur `onChange`, pas un import lent).
+- Sheets sans heure → le « 10 min » démarre à la **détection** (déclencheur **minuté**, ≤ 1 min de latence ; plus fiable que `onChange` pour des lignes ajoutées par une app externe comme EasySell).
 - Données sales nettoyées à l'ingestion ; jamais de dédup sur le téléphone seul.
 - Telegram > WhatsApp pour les alertes (WhatsApp API = templates payants hors fenêtre 24 h).
 

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import CloseuseApp from './CloseuseApp'
-import OwnerApp from './OwnerApp'
 import Login from './components/Login'
 import { supabase, supabaseEnabled, getAgent, type Agent } from './lib/supabase'
 
@@ -34,7 +33,7 @@ export default function App() {
   const logout = () => supabase?.auth.signOut()
 
   if (mode === 'loading') {
-    return <div className="app"><div className="empty"><i className="ti ti-loader-2" aria-hidden="true" />Connexion…</div></div>
+    return <div className="app"><div className="boot-load"><span className="spinner" /><p>Connexion…</p></div></div>
   }
   if (mode === 'noconfig') {
     return <div className="app"><div className="boot-err"><i className="ti ti-alert-triangle" aria-hidden="true" /><h3>Configuration manquante</h3><p>Les identifiants Supabase ne sont pas définis.</p></div></div>
@@ -55,7 +54,5 @@ export default function App() {
       </div>
     )
   }
-  return agent.role === 'owner'
-    ? <OwnerApp live agent={agent} onSwitchRole={logout} />
-    : <CloseuseApp live agent={agent} onSwitchRole={logout} />
+  return <CloseuseApp live agent={agent} onSwitchRole={logout} />
 }

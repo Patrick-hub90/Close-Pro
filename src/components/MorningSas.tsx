@@ -4,10 +4,21 @@ import { fcfa } from '../lib'
 
 type Issue = 'livre' | 'retour' | 'reporte'
 
-export default function MorningSas({ orders, onDone }: { orders: Order[]; onDone: () => void }) {
+export default function MorningSas({ orders, onDone, onResolve }: {
+  orders: Order[]
+  onDone: () => void
+  onResolve?: (id: string, issue: Issue) => void
+}) {
+  // Fige la liste du matin : les cartes ne disparaissent pas au clic (livré -> archivé).
+  const [list] = useState(orders)
   const [resolved, setResolved] = useState<Record<string, Issue>>({})
   const done = Object.keys(resolved).length
-  const total = orders.length
+  const total = list.length
+
+  const mark = (id: string, issue: Issue) => {
+    setResolved((p) => ({ ...p, [id]: issue }))
+    onResolve?.(id, issue)
+  }
 
   return (
     <div className="app">
@@ -21,7 +32,7 @@ export default function MorningSas({ orders, onDone }: { orders: Order[]; onDone
         <span className="pg">{done}/{total}</span>
       </div>
 
-      {orders.map((o) => {
+      {list.map((o) => {
         const r = resolved[o.id]
         return (
           <div className={`dcard ${r ? 'done' : ''}`} key={o.id}>
@@ -29,16 +40,16 @@ export default function MorningSas({ orders, onDone }: { orders: Order[]; onDone
               <span className="nm">{o.client}</span>
               <span className="amt">{fcfa(o.total)}</span>
             </div>
-            <div className="sub">{o.produit} · {o.adresse} · hier</div>
+            <div className="sub">{o.produit} · {o.adresse}</div>
             <div className="dcb">
-              <button className="liv" onClick={() => setResolved((p) => ({ ...p, [o.id]: 'livre' }))}>
+              <button className={`liv ${r === 'livre' ? 'on' : ''}`} onClick={() => mark(o.id, 'livre')}>
                 <i className="ti ti-check" aria-hidden="true" />{r === 'livre' ? 'Livré ✓' : 'Livré'}
               </button>
-              <button className="ret" onClick={() => setResolved((p) => ({ ...p, [o.id]: 'retour' }))}>
-                <i className="ti ti-arrow-back-up" aria-hidden="true" />Retour
+              <button className={`ret ${r === 'retour' ? 'on' : ''}`} onClick={() => mark(o.id, 'retour')}>
+                <i className="ti ti-arrow-back-up" aria-hidden="true" />{r === 'retour' ? 'Retour ✓' : 'Retour'}
               </button>
-              <button className="rep" onClick={() => setResolved((p) => ({ ...p, [o.id]: 'reporte' }))}>
-                <i className="ti ti-calendar" aria-hidden="true" />Reporté
+              <button className={`rep ${r === 'reporte' ? 'on' : ''}`} onClick={() => mark(o.id, 'reporte')}>
+                <i className="ti ti-calendar" aria-hidden="true" />{r === 'reporte' ? 'Reporté ✓' : 'Reporté'}
               </button>
             </div>
           </div>

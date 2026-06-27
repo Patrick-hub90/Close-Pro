@@ -65,8 +65,11 @@ export function rappelToday(h: number, m: number): number {
 }
 
 const TERMINAUX: Order['statut'][] = ['livre', 'annule', 'refuse']
+// Confirmée ou en cours de livraison : pipeline de livraison (revue le matin), plus dans les appels.
+const LIVRAISON_PIPELINE: Order['statut'][] = ['confirme', 'livraison']
 
 export function isLate(o: Order, now: number): boolean {
+  if (TERMINAUX.includes(o.statut) || LIVRAISON_PIPELINE.includes(o.statut)) return false
   if (o.rappelAt && now > o.rappelAt) return true
   if (o.deadline && o.statut === 'a_appeler' && !o.rappelAt && now > o.deadline) return true
   return false
@@ -74,12 +77,12 @@ export function isLate(o: Order, now: number): boolean {
 
 export function matchFiltre(o: Order, f: FiltreId, now: number, working = true): boolean {
   if (TERMINAUX.includes(o.statut)) return f === 'toutes'
-  if (o.statut === 'livraison') return f === 'livraisons' || f === 'toutes'
+  if (LIVRAISON_PIPELINE.includes(o.statut)) return f === 'livraisons' || f === 'toutes'
   switch (f) {
     case 'a_appeler': return (o.statut === 'a_appeler' || o.statut === 'injoignable') && !o.rappelAt
-    case 'rappels': return !!o.rappelAt
+    case 'rappels': return !!o.rappelAt && (o.statut === 'a_rappeler' || o.statut === 'a_appeler' || o.statut === 'injoignable')
     case 'retard': return working && isLate(o, now)
-    case 'livraisons': return o.statut === 'livraison'
+    case 'livraisons': return false
     case 'toutes': return true
     case 'archivees': return false
   }

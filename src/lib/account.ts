@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { supabase } from './supabase'
+import { supabase, safeFetch } from './supabase'
 
 /** Change le mot de passe de l'utilisateur connecté. */
 export async function changePassword(newPassword: string): Promise<{ error?: string }> {
@@ -15,20 +15,24 @@ export async function changePassword(newPassword: string): Promise<{ error?: str
  */
 export async function createCloseuse(p: {
   nom: string; email: string; password: string; pays: string
+  debut?: string; fin?: string; sheetUrl?: string
 }): Promise<{ error?: string }> {
   const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
   const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
   if (!url || !key || !supabase) return { error: 'Supabase non configuré' }
 
-  const tmp = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
+  const tmp = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: safeFetch } })
   const { data, error } = await tmp.auth.signUp({ email: p.email.trim(), password: p.password })
   if (error) return { error: error.message }
   const uid = data.user?.id
   if (!uid) return { error: 'Compte non créé — désactive la confirmation email dans Supabase.' }
 
+  const horaires = (p.debut || p.fin || p.sheetUrl)
+    ? { debut: p.debut || null, fin: p.fin || null, sheet_url: p.sheetUrl || null }
+    : null
   const { error: e2 } = await supabase
     .from('agents')
-    .insert({ auth_uid: uid, role: 'closer', nom: p.nom.trim(), pays: p.pays })
+    .insert({ auth_uid: uid, role: 'closer', nom: p.nom.trim(), pays: p.pays, horaires })
   if (e2) return { error: 'Compte créé mais fiche agent en échec : ' + e2.message }
   return {}
 }

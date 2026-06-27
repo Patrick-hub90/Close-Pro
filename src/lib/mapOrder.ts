@@ -24,5 +24,7 @@ export function mapDbOrder(r: any): Order {
     rappelLieu: r.rappel_lieu ?? undefined,
     commentaire: r.dernier_commentaire ?? undefined,
     clientCount: 1,
+    extra: r.extra && typeof r.extra === 'object' && !Array.isArray(r.extra) && Object.keys(r.extra).length ? r.extra : undefined,
+    closeuseId: r.closeuse_id ?? undefined,
   }
 }

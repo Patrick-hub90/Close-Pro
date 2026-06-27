@@ -70,6 +70,9 @@ export default function CloseuseApp({
   const [selectMode, setSelectMode] = useState(false)
   const [blockLate, setBlockLate] = useState(false)
   const [orderBlock, setOrderBlock] = useState<Order | null>(null)
+  // Commandes qu'on vient de traiter : restent visibles dans la liste courante (ne « disparaissent »
+  // pas) même si leur nouveau statut ne correspond plus au filtre — jusqu'au changement d'onglet.
+  const [stickyIds, setStickyIds] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [archived, setArchived] = useState<Order[]>([])
   const [selectedPays, setSelectedPays] = useState('')
@@ -120,6 +123,9 @@ export default function CloseuseApp({
     supabase.from('agents').select('id, nom, pays').eq('role', 'closer').then(({ data }) => setClosers((data as { id: string; nom: string; pays: string | null }[]) ?? []))
   }, [live, agent])
 
+  // En changeant d'onglet (ou de pays), on repart d'une liste propre : on oublie le « sticky ».
+  useEffect(() => { setStickyIds(new Set()) }, [filtre, selectedPays])
+
   // Moteur de contrainte : alerte (vibration + bip) quand une commande passe en retard.
   const notifiedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
@@ -158,8 +164,8 @@ export default function CloseuseApp({
   const viewFiltre: FiltreId = lockLate ? 'a_appeler' : filtre
 
   const liste = useMemo(
-    () => scoped.filter((o) => matchFiltre(o, viewFiltre, now, workingNow)).sort(byUrgence(now)),
-    [scoped, viewFiltre, now, workingNow]
+    () => scoped.filter((o) => matchFiltre(o, viewFiltre, now, workingNow) || stickyIds.has(o.id)).sort(byUrgence(now)),
+    [scoped, viewFiltre, now, workingNow, stickyIds]
   )
   const isArchive = viewFiltre === 'archivees'
   const displayList = isArchive ? archived : liste
@@ -317,6 +323,8 @@ export default function CloseuseApp({
       if (r.rappelAt) void supabase.from('scheduled_callbacks').insert({ order_id: o.id, agent_id: agent?.id ?? null, rappel_at: new Date(r.rappelAt).toISOString(), lieu: r.rappelLieu ?? null, motif: r.statut })
     }
 
+    // La commande reste visible dans la liste courante (sticky) malgré son changement de statut.
+    setStickyIds((prev) => new Set(prev).add(o.id))
     // Pas d'enchaînement automatique : on revient à la liste, l'utilisateur choisit la suivante.
     setCall(null)
   }

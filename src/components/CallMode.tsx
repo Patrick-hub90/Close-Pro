@@ -194,6 +194,29 @@ export default function CallMode({
           <input type="number" inputMode="numeric" min={0} value={cout || ''} onChange={(e) => { setCout(+e.target.value || 0); setCostError(false) }} placeholder="ex. 2 500" />
         </label>
 
+        {/* Commentaire AVANT le choix du statut : il part avec le changement enregistré. */}
+        <div className="cm-block">
+          <textarea className="cm-area" placeholder="Commentaire (ajouté à l'historique)…" value={comment} onChange={(e) => setComment(e.target.value)} rows={2} />
+          <div className="qc">
+            {puces.map((p) => (
+              <span key={p} className="qc-chip">
+                <button className="qc-add" onClick={() => setComment((c) => (c ? c + ' · ' + p : p))}>{p}</button>
+                {gerePuces ? <button className="qc-del" onClick={() => retirerPuce(p)} aria-label="Supprimer"><i className="ti ti-x" aria-hidden="true" /></button> : null}
+              </span>
+            ))}
+            <button className="qc-gear" onClick={() => setGerePuces((v) => !v)} aria-label="Gérer les commentaires">
+              <i className={`ti ${gerePuces ? 'ti-check' : 'ti-settings'}`} aria-hidden="true" />
+            </button>
+          </div>
+          {gerePuces ? (
+            <div className="qc-new">
+              <input value={newPuce} placeholder="Nouveau commentaire rapide" onChange={(e) => setNewPuce(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') ajouterPuce() }} />
+              <button onClick={ajouterPuce} aria-label="Ajouter"><i className="ti ti-plus" aria-hidden="true" /></button>
+            </div>
+          ) : null}
+        </div>
+
         {isLivraison ? (
           <>
             <div className="res-h">Clôturer la livraison</div>
@@ -215,29 +238,6 @@ export default function CallMode({
             </div>
           </>
         )}
-
-        {/* Commentaire + puces configurables */}
-        <div className="cm-block">
-          <textarea className="cm-area" placeholder="Commentaire…" value={comment} onChange={(e) => setComment(e.target.value)} rows={2} />
-          <div className="qc">
-            {puces.map((p) => (
-              <span key={p} className="qc-chip">
-                <button className="qc-add" onClick={() => setComment((c) => (c ? c + ' · ' + p : p))}>{p}</button>
-                {gerePuces ? <button className="qc-del" onClick={() => retirerPuce(p)} aria-label="Supprimer"><i className="ti ti-x" aria-hidden="true" /></button> : null}
-              </span>
-            ))}
-            <button className="qc-gear" onClick={() => setGerePuces((v) => !v)} aria-label="Gérer les commentaires">
-              <i className={`ti ${gerePuces ? 'ti-check' : 'ti-settings'}`} aria-hidden="true" />
-            </button>
-          </div>
-          {gerePuces ? (
-            <div className="qc-new">
-              <input value={newPuce} placeholder="Nouveau commentaire rapide" onChange={(e) => setNewPuce(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') ajouterPuce() }} />
-              <button onClick={ajouterPuce} aria-label="Ajouter"><i className="ti ti-plus" aria-hidden="true" /></button>
-            </div>
-          ) : null}
-        </div>
 
         {/* Historique — replié par défaut, avant les détails */}
         <button className="histH" onClick={() => setHistOpen((v) => !v)}>

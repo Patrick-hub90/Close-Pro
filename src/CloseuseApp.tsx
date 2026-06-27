@@ -307,7 +307,8 @@ export default function CloseuseApp({
       supabase.from('orders').update(db).eq('id', o.id).then(({ error }) => {
         if (error) console.error('[Close-Pro] update order failed:', error.message, error)
       })
-      void supabase.from('call_attempts').insert({ order_id: o.id, agent_id: agent?.id ?? null, canal: 'tel', resultat: r.statut, commentaire: r.commentaire ?? null })
+      supabase.from('call_attempts').insert({ order_id: o.id, agent_id: agent?.id ?? null, canal: 'tel', resultat: r.statut, commentaire: r.commentaire ?? null })
+        .then(({ error }) => { if (error) console.error('[Close-Pro] historique (call_attempts) échec :', error.message) })
       if (r.rappelAt) void supabase.from('scheduled_callbacks').insert({ order_id: o.id, agent_id: agent?.id ?? null, rappel_at: new Date(r.rappelAt).toISOString(), lieu: r.rappelLieu ?? null, motif: r.statut })
     }
 

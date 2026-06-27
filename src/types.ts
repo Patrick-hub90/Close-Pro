@@ -34,6 +34,7 @@ export interface Order {
   clientCount?: number    // nb de commandes du meme numero (doublon / recurrent)
   extra?: Record<string, unknown> // colonnes variables du Sheet (non mappees / ajoutees)
   closeuseId?: string     // agent assigne (pour le classement proprietaire)
+  confirmeAt?: number     // ms epoch — date de confirmation (revue de livraison le lendemain)
 }
 
 export type FiltreId = 'a_appeler' | 'rappels' | 'retard' | 'livraisons' | 'toutes' | 'archivees'

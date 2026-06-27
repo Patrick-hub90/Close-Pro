@@ -131,7 +131,12 @@ export default function CloseuseApp({
     }
   }, [now, orders, live, workingNow])
 
-  const sasOrders = live ? scoped.filter((o) => o.statut === 'confirme' || o.statut === 'livraison') : LIVRAISONS
+  // Revue de livraison du matin : commandes en livraison confirmées AVANT aujourd'hui.
+  // Une commande confirmée le jour même n'y apparaît que le lendemain (la livraison suit).
+  const startOfToday = useMemo(() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() }, [now])
+  const sasOrders = live
+    ? scoped.filter((o) => (o.statut === 'confirme' || o.statut === 'livraison') && (!o.confirmeAt || o.confirmeAt < startOfToday))
+    : LIVRAISONS
 
   const counts = useMemo(() => {
     const c: Record<FiltreId, number> = { a_appeler: 0, rappels: 0, retard: 0, livraisons: 0, toutes: 0, archivees: 0 }
@@ -195,8 +200,14 @@ export default function CloseuseApp({
   function bulkStatut(statut: Statut) {
     const ids = [...selected]
     if (!ids.length) return
-    setOrders((prev) => prev.map((x) => (ids.includes(x.id) ? { ...x, statut } : x)))
-    if (live && supabase) void supabase.from('orders').update({ statut }).in('id', ids)
+    const nowMs = Date.now()
+    setOrders((prev) => prev.map((x) => (ids.includes(x.id)
+      ? { ...x, statut, confirmeAt: statut === 'confirme' ? (x.confirmeAt ?? nowMs) : x.confirmeAt } : x)))
+    if (live && supabase) {
+      const patch: Record<string, any> = { statut }
+      if (statut === 'confirme') patch.confirme_at = new Date(nowMs).toISOString()
+      void supabase.from('orders').update(patch).in('id', ids)
+    }
     exitSelect()
   }
 
@@ -210,9 +221,11 @@ export default function CloseuseApp({
     // résultat (confirmé, whatsapp, refus…) clôt le rappel : on l'efface, sinon la
     // commande reste coincée dans l'onglet Rappels.
     const keepRappel = r.statut === 'a_rappeler' || r.statut === 'injoignable'
+    // Date de confirmation : posée une seule fois, sert à la revue de livraison du lendemain.
+    const confirmeAt = r.statut === 'confirme' ? (o.confirmeAt ?? Date.now()) : o.confirmeAt
 
     setOrders((prev) => prev.map((x) => (x.id === o.id ? {
-      ...x, statut: r.statut, tentatives: newTent, total,
+      ...x, statut: r.statut, tentatives: newTent, total, confirmeAt,
       prixNegocie: r.prixNegocie ?? x.prixNegocie, coutLivraison: r.coutLivraison ?? x.coutLivraison,
       produit: r.produit ?? x.produit, quantite: qte, adresse: r.adresse ?? x.adresse,
       commentaire: r.commentaire ?? x.commentaire,
@@ -226,6 +239,7 @@ export default function CloseuseApp({
       if (r.coutLivraison != null) db.cout_livraison = r.coutLivraison
       if (r.adresse != null) db.adresse = r.adresse
       if (r.commentaire) db.dernier_commentaire = r.commentaire
+      if (r.statut === 'confirme' && !o.confirmeAt) db.confirme_at = new Date(confirmeAt!).toISOString()
       if (keepRappel && r.rappelAt) {
         const iso = new Date(r.rappelAt).toISOString()
         db.rappel_at = iso; db.rappel_lieu = r.rappelLieu ?? null
@@ -243,9 +257,9 @@ export default function CloseuseApp({
     setCall((c) => { if (!c) return null; const next = c.index + 1; return next < c.queue.length ? { ...c, index: next } : null })
   }
 
-  // Clôture du matin : livré -> archivé, retour -> annulé, reporté -> reste en livraison.
-  function resolveSas(orderId: string, issue: 'livre' | 'retour' | 'reporte') {
-    const statut: Statut = issue === 'livre' ? 'livre' : issue === 'retour' ? 'annule' : 'livraison'
+  // Clôture du matin : livré -> archivé, annulé -> archivé, reporté -> reste en livraison.
+  function resolveSas(orderId: string, issue: 'livre' | 'annule' | 'reporte') {
+    const statut: Statut = issue === 'livre' ? 'livre' : issue === 'annule' ? 'annule' : 'livraison'
     setOrders((prev) => prev.map((x) => (x.id === orderId ? { ...x, statut } : x)))
     if (live && supabase) {
       supabase.from('orders').update({ statut }).eq('id', orderId).then(({ error }) => {

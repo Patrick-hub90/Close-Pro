@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Order } from '../types'
 import { fcfa } from '../lib'
 
-type Issue = 'livre' | 'retour' | 'reporte'
+type Issue = 'livre' | 'annule' | 'reporte'
 
 export default function MorningSas({ orders, onDone, onResolve }: {
   orders: Order[]
@@ -45,8 +45,8 @@ export default function MorningSas({ orders, onDone, onResolve }: {
               <button className={`liv ${r === 'livre' ? 'on' : ''}`} onClick={() => mark(o.id, 'livre')}>
                 <i className="ti ti-check" aria-hidden="true" />{r === 'livre' ? 'Livré ✓' : 'Livré'}
               </button>
-              <button className={`ret ${r === 'retour' ? 'on' : ''}`} onClick={() => mark(o.id, 'retour')}>
-                <i className="ti ti-arrow-back-up" aria-hidden="true" />{r === 'retour' ? 'Retour ✓' : 'Retour'}
+              <button className={`ret ${r === 'annule' ? 'on' : ''}`} onClick={() => mark(o.id, 'annule')}>
+                <i className="ti ti-x" aria-hidden="true" />{r === 'annule' ? 'Annulé ✓' : 'Annulé'}
               </button>
               <button className={`rep ${r === 'reporte' ? 'on' : ''}`} onClick={() => mark(o.id, 'reporte')}>
                 <i className="ti ti-calendar" aria-hidden="true" />{r === 'reporte' ? 'Reporté ✓' : 'Reporté'}

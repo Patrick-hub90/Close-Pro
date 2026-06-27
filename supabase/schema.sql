@@ -85,6 +85,7 @@ create table if not exists orders (
   is_backfill   boolean not null default false, -- import historique : aucun timer
   is_duplicate_suspect boolean not null default false,
   dernier_commentaire text,
+  confirme_at   timestamptz,                -- date de confirmation (revue de livraison le lendemain)
   date_commande timestamptz,
   extra         jsonb default '{}'::jsonb,  -- colonnes variables du sheet
   created_at    timestamptz not null default now(),

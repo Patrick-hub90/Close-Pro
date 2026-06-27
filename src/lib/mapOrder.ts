@@ -26,5 +26,6 @@ export function mapDbOrder(r: any): Order {
     clientCount: 1,
     extra: r.extra && typeof r.extra === 'object' && !Array.isArray(r.extra) && Object.keys(r.extra).length ? r.extra : undefined,
     closeuseId: r.closeuse_id ?? undefined,
+    confirmeAt: r.confirme_at ? new Date(r.confirme_at).getTime() : undefined,
   }
 }

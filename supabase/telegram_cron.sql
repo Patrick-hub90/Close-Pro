@@ -96,52 +96,14 @@ begin
   end loop;
 end; $$;
 
--- 6) Notifie le proprietaire quand une closeuse TRAITE un appel.
-create or replace function notify_traitements() returns void language plpgsql as $$
-declare tok text; chat text; r record; msg text; lbl text;
-begin
-  select value into tok  from app_config where key = 'telegram_token';
-  select value into chat from app_config where key = 'telegram_chat_id';
-  if tok is null or chat is null or tok like 'COLLER%' or chat like 'COLLER%' then return; end if;
+-- 6) (Notification de traitement supprimee : le proprietaire ne veut plus etre
+--    notifie des changements de statut. On retire l'ancienne fonction si elle existe.)
+drop function if exists notify_traitements();
 
-  for r in
-    select ca.id, ca.resultat, ca.commentaire, o.numero, o.nom_complet, a.nom as closeuse_nom
-    from call_attempts ca
-    join orders o on o.id = ca.order_id
-    left join agents a on a.id = ca.agent_id
-    left join countries c on c.code = o.pays
-    where coalesce(ca.notifie, false) = false
-      and ca.canal = 'tel'
-      and ca.created_at > now() - interval '30 minutes'                       -- traitement récent
-      and in_working_hours(coalesce(c.fuseau, 'Africa/Abidjan'), a.horaires)  -- pendant les heures de travail
-    order by ca.created_at asc
-    limit 40
-  loop
-    lbl := case r.resultat
-      when 'confirme' then 'Confirmé' when 'a_rappeler' then 'À rappeler'
-      when 'injoignable' then 'Injoignable' when 'reporte' then 'Reporté'
-      when 'whatsapp' then 'WhatsApp' when 'annule' then 'Annulé'
-      when 'livre' then 'Livré' when 'refuse' then 'Refus'
-      when 'ne_reconnait_pas' then 'Ne reconnaît pas'
-      else coalesce(r.resultat, '?') end;
-    msg := E'\xF0\x9F\x93\x9E ' || coalesce(r.closeuse_nom, 'Closeuse') || ' a traité ' || r.numero
-        || E' \xE2\x86\x92 ' || lbl
-        || coalesce(E'\n' || nullif(r.commentaire, ''), '');
-
-    perform net.http_post(
-      url := 'https://api.telegram.org/bot' || tok || '/sendMessage',
-      headers := '{"Content-Type":"application/json"}'::jsonb,
-      body := jsonb_build_object('chat_id', chat, 'text', msg)
-    );
-    update call_attempts set notifie = true where id = r.id;
-  end loop;
-end; $$;
-
--- 7) Scan unique (retards + traitements) chaque minute.
+-- 7) Scan des retards chaque minute.
 create or replace function notify_scan() returns void language plpgsql as $$
 begin
   perform notify_late_orders();
-  perform notify_traitements();
 end; $$;
 
 select cron.unschedule('close-pro-sla') where exists (select 1 from cron.job where jobname = 'close-pro-sla');
@@ -150,6 +112,6 @@ select cron.schedule('close-pro-sla', '* * * * *', $$select notify_scan()$$);
 -- ============================================================
 -- DIAGNOSTIC :
 --   select notify_test();        -- message Telegram immediat
---   select notify_scan();        -- force un scan (retards + traitements)
+--   select notify_scan();        -- force un scan des retards
 --   select * from cron.job;      -- tache 'close-pro-sla' planifiee ?
 -- ============================================================

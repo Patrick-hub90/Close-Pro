@@ -83,6 +83,9 @@ export default function OrderCard({
 }) {
   // Pas de pulsation d'urgence pour le propriétaire (vue de supervision).
   const late = !paused && !owner && isLate(o, now)
+  // Un rappel/injoignable/reporté dont l'heure est passée redevient « à appeler » : la pastille suit.
+  const rappelExpire = (o.statut === 'a_rappeler' || o.statut === 'injoignable' || o.statut === 'reporte') && !!o.rappelAt && now > o.rappelAt
+  const sInfo = rappelExpire ? { label: 'À appeler', tone: '' } : (STATUT_INFO[o.statut] ?? { label: o.statut, tone: '' })
   return (
     <div
       className={`card ${late ? 'late' : ''} ${selectMode ? 'selecting' : ''} ${selected ? 'selected' : ''}`}
@@ -106,7 +109,7 @@ export default function OrderCard({
       </div>
 
       <div className="badges">
-        <span className={`pastille ${STATUT_INFO[o.statut]?.tone ?? ''}`}><span className="pdot" />{STATUT_INFO[o.statut]?.label ?? o.statut}</span>
+        <span className={`pastille ${sInfo.tone}`}><span className="pdot" />{sInfo.label}</span>
         {o.clientCount && o.clientCount > 1 ? (
           <span className="bdg"><i className="ti ti-repeat" aria-hidden="true" /> client ×{o.clientCount}</span>
         ) : null}

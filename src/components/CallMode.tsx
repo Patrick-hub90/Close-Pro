@@ -107,7 +107,10 @@ export default function CallMode({
   const extraEntries = o.extra
     ? Object.entries(o.extra).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
     : []
-  const pillTone = TONE_OF[o.statut] ?? ''
+  // Un rappel/injoignable/reporté dont l'heure est passée s'affiche « À appeler ».
+  const rappelExpire = (o.statut === 'a_rappeler' || o.statut === 'injoignable' || o.statut === 'reporte') && !!o.rappelAt && Date.now() > o.rappelAt
+  const pillTone = rappelExpire ? '' : (TONE_OF[o.statut] ?? '')
+  const pillLabel = rappelExpire ? 'À appeler' : (STATUT_LABELS[o.statut] ?? o.statut)
   const waText = `Bonjour ${o.client}, confirmation de votre commande ${o.numero} : ${produit}${qte > 1 ? ` (x${qte})` : ''} pour ${fcfa(total, false)}. Pouvez-vous confirmer la livraison ? Merci.`
   const schedMs = fromLocalInput(schedAt)
   const histCount = hist.length + (o.createdAt ? 1 : 0)
@@ -156,7 +159,7 @@ export default function CallMode({
             <div className="ch-num">Commande {o.numero}</div>
             <div className="ch-step">{index + 1} / {queue.length}</div>
           </div>
-          <span className={`ch-stat ${pillTone}`}>{STATUT_LABELS[o.statut] ?? o.statut}</span>
+          <span className={`ch-stat ${pillTone}`}>{pillLabel}</span>
           <button className={`ch-pen ${showEdit ? 'on' : ''}`} onClick={() => setShowEdit((v) => !v)} aria-label="Modifier">
             <i className="ti ti-pencil" aria-hidden="true" />
           </button>

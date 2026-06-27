@@ -90,11 +90,11 @@ export default function OrderCard({
         <span className={`selbox ${selected ? 'on' : ''}`}>{selected ? <i className="ti ti-check" aria-hidden="true" /> : null}</span>
       ) : null}
       <div className="r1">
-        <span className="nm">{o.client}</span>
+        <span className="nm">{o.numero}</span>
         <Timer o={o} now={now} paused={paused} owner={owner} />
       </div>
       <div className="sub">
-        {o.produit}{o.quantite > 1 ? ` · ×${o.quantite}` : ''}
+        {o.client} · {o.produit}{o.quantite > 1 ? ` · ×${o.quantite}` : ''}
       </div>
       <div className="r2">
         <span className="amt">{fcfa(o.total)}</span>

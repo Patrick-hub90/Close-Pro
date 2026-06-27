@@ -207,14 +207,16 @@ export default function CloseuseApp({
   const scoreCls = score >= 85 ? '' : score >= 60 ? 'mid' : 'low'
 
   // Discipline d'appel : tant qu'il reste des retards (en horaires), on doit les
-  // traiter avant d'ouvrir une nouvelle commande qui n'est pas elle-même en retard.
+  // traiter avant d'ouvrir une NOUVELLE commande (statut « à appeler », jamais traitée).
+  // Les confirmées, livrées, rappels, etc. restent ouvrables librement.
+  const bloqueNouvelle = (o: Order) => workingNow && counts.retard > 0 && o.statut === 'a_appeler' && !isLate(o, now)
   function openAt(o: Order) {
-    if (workingNow && counts.retard > 0 && !isLate(o, now)) { setBlockLate(true); return }
+    if (bloqueNouvelle(o)) { setBlockLate(true); return }
     const i = displayList.findIndex((x) => x.id === o.id)
     setCall({ queue: displayList, index: Math.max(0, i) })
   }
   function startQueue() {
-    if (workingNow && counts.retard > 0 && viewFiltre !== 'retard') { setBlockLate(true); return }
+    if (workingNow && counts.retard > 0 && viewFiltre === 'a_appeler') { setBlockLate(true); return }
     if (liste.length) setCall({ queue: liste, index: 0 })
   }
   function toggleSelect(id: string) {

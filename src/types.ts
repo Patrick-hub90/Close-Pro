@@ -40,7 +40,7 @@ export interface Order {
   createdAt?: number      // ms epoch — date de reception de la commande
 }
 
-export type FiltreId = 'a_appeler' | 'rappels' | 'retard' | 'livraisons' | 'toutes' | 'archivees'
+export type FiltreId = 'a_appeler' | 'rappels' | 'retard' | 'livraisons' | 'discussion' | 'toutes' | 'archivees'
 
 /** Résultat d'un appel : statut + saisies (rappel, édition, commentaire). */
 export interface CallResult {

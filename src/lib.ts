@@ -88,6 +88,7 @@ export function matchFiltre(o: Order, f: FiltreId, now: number, working = true):
     case 'rappels': return !!o.rappelAt && now < o.rappelAt && PLANIFIES.includes(o.statut)
     case 'retard': return working && isLate(o, now)
     case 'livraisons': return false
+    case 'discussion': return o.statut === 'whatsapp'
     case 'toutes': return true
     case 'archivees': return false
   }

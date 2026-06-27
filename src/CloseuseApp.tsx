@@ -16,6 +16,7 @@ const FILTRES: { id: FiltreId; label: string }[] = [
   { id: 'rappels', label: 'Rappels' },
   { id: 'retard', label: 'En retard' },
   { id: 'livraisons', label: 'Livraisons' },
+  { id: 'discussion', label: 'En discussion' },
   { id: 'toutes', label: 'Toutes' },
   { id: 'archivees', label: 'Archivées' },
 ]
@@ -142,7 +143,7 @@ export default function CloseuseApp({
     : LIVRAISONS
 
   const counts = useMemo(() => {
-    const c: Record<FiltreId, number> = { a_appeler: 0, rappels: 0, retard: 0, livraisons: 0, toutes: 0, archivees: 0 }
+    const c: Record<FiltreId, number> = { a_appeler: 0, rappels: 0, retard: 0, livraisons: 0, discussion: 0, toutes: 0, archivees: 0 }
     for (const o of scoped) for (const f of FILTRES) if (matchFiltre(o, f.id, now, workingNow)) c[f.id]++
     return c
   }, [scoped, now, workingNow])
@@ -353,6 +354,7 @@ export default function CloseuseApp({
   const emptySub = filtre === 'a_appeler' ? 'Aucune commande à appeler pour le moment.'
     : filtre === 'rappels' ? 'Aucun rappel programmé.'
     : filtre === 'retard' ? 'Rien en retard — tout est à jour.'
+    : filtre === 'discussion' ? 'Aucune commande en discussion WhatsApp.'
     : 'Rien à afficher ici.'
 
   return (

@@ -79,11 +79,12 @@ export default function CallMode({
   // Fenêtre de planification (statuts à date).
   const [modal, setModal] = useState<{ statut: Statut; label: string; tone: Tone } | null>(null)
   const [schedAt, setSchedAt] = useState('')
+  const [costError, setCostError] = useState(false)
   const presets = useMemo(buildPresets, [index])
 
   const oid = o?.id
   useEffect(() => {
-    setComment(''); setShowEdit(false); setGerePuces(false); setNewPuce(''); setModal(null); setSchedAt(''); setHistOpen(false)
+    setComment(''); setShowEdit(false); setGerePuces(false); setNewPuce(''); setModal(null); setSchedAt(''); setHistOpen(false); setCostError(false)
     setPrix(o?.prixNegocie ?? o?.prixUnitaire ?? 0)
     setCout(o?.coutLivraison ?? 0)
     setProduit(o?.produit ?? '')
@@ -98,6 +99,8 @@ export default function CallMode({
   }, [oid])
 
   if (!o) return null
+  // Commande déjà dans le pipeline de livraison → écran de clôture (Livré / Annulé / Reporté).
+  const isLivraison = o.statut === 'confirme' || o.statut === 'livraison' || o.statut === 'reporte'
   const total = Math.max(0, Math.round(prix)) * Math.max(1, qte) + Math.max(0, Math.round(cout))
   // Détails : toutes les colonnes du Sheet, y compris les valeurs sans nom de colonne.
   const extraEntries = o.extra
@@ -121,9 +124,12 @@ export default function CallMode({
   }
 
   // Clic sur un statut : appliqué directement ; ceux à date ouvrent la fenêtre.
+  // « Livré » exige un coût de livraison.
   function pick(r: { statut: Statut; label: string; tone: Tone; sched?: boolean }) {
+    if (r.statut === 'livre' && cout <= 0) { setCostError(true); return }
     if (r.sched) {
-      setSchedAt(toLocalInput(Date.now() + 3600_000))
+      const dft = r.statut === 'reporte' ? 86_400_000 : 3600_000
+      setSchedAt(toLocalInput(Date.now() + dft))
       setModal({ statut: r.statut, label: r.label, tone: r.tone })
     } else {
       emit(r.statut)
@@ -175,25 +181,41 @@ export default function CallMode({
 
         {o.commentaire ? (<div className="note"><i className="ti ti-note" aria-hidden="true" /><span>{o.commentaire}</span></div>) : null}
 
-        <div className="big">
-          <a className="call-btn" href={telLink(o.telephone)}><i className="ti ti-phone" aria-hidden="true" /> Appeler</a>
-          <a className="wa-btn" href={waLink(o.whatsapp, waText)} target="_blank" rel="noreferrer"><i className="ti ti-brand-whatsapp" aria-hidden="true" /> WhatsApp</a>
-        </div>
+        {/* Appel/WhatsApp uniquement quand il reste à appeler (pas en livraison) */}
+        {!isLivraison ? (
+          <div className="big">
+            <a className="call-btn" href={telLink(o.telephone)}><i className="ti ti-phone" aria-hidden="true" /> Appeler</a>
+            <a className="wa-btn" href={waLink(o.whatsapp, waText)} target="_blank" rel="noreferrer"><i className="ti ti-brand-whatsapp" aria-hidden="true" /> WhatsApp</a>
+          </div>
+        ) : null}
 
-        <label className="livz">
-          <span><i className="ti ti-truck" aria-hidden="true" /> Coût de livraison (FCFA)</span>
-          <input type="number" inputMode="numeric" min={0} value={cout || ''} onChange={(e) => setCout(+e.target.value || 0)} placeholder="ex. 2 500" />
+        <label className={`livz ${costError ? 'err' : ''}`}>
+          <span><i className="ti ti-truck" aria-hidden="true" /> Coût de livraison (FCFA){costError ? ' — obligatoire pour livrer' : ''}</span>
+          <input type="number" inputMode="numeric" min={0} value={cout || ''} onChange={(e) => { setCout(+e.target.value || 0); setCostError(false) }} placeholder="ex. 2 500" />
         </label>
 
-        {/* Statuts — chips compacts, appliqués directement */}
-        <div className="res-h">Résultat de l'appel</div>
-        <div className="chips">
-          {RESULTATS.map((r) => (
-            <button key={r.statut} className={`chip2 ${r.tone} ${o.statut === r.statut ? 'on' : ''}`} onClick={() => pick(r)}>
-              <i className={`ti ${r.icon}`} aria-hidden="true" /> {r.label}
-            </button>
-          ))}
-        </div>
+        {isLivraison ? (
+          <>
+            <div className="res-h">Clôturer la livraison</div>
+            <div className="livr-actions">
+              <button className="lvb liv" onClick={() => pick({ statut: 'livre', label: 'Livré', tone: 'liv' })}><i className="ti ti-check" aria-hidden="true" /> Livré</button>
+              <button className="lvb ann" onClick={() => pick({ statut: 'annule', label: 'Annulé', tone: 'dang' })}><i className="ti ti-x" aria-hidden="true" /> Annulé</button>
+              <button className="lvb rep" onClick={() => pick({ statut: 'reporte', label: 'Reporté', tone: 'rep', sched: true })}><i className="ti ti-calendar-event" aria-hidden="true" /> Reporté</button>
+            </div>
+            {costError ? <div className="lv-err"><i className="ti ti-alert-triangle" aria-hidden="true" /> Renseigne le coût de livraison avant de marquer « Livré ».</div> : null}
+          </>
+        ) : (
+          <>
+            <div className="res-h">Résultat de l'appel</div>
+            <div className="chips">
+              {RESULTATS.map((r) => (
+                <button key={r.statut} className={`chip2 ${r.tone} ${o.statut === r.statut ? 'on' : ''}`} onClick={() => pick(r)}>
+                  <i className={`ti ${r.icon}`} aria-hidden="true" /> {r.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Commentaire + puces configurables */}
         <div className="cm-block">

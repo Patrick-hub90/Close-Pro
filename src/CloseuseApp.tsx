@@ -243,11 +243,13 @@ export default function CloseuseApp({
     // résultat (confirmé, whatsapp, refus…) clôt le rappel : on l'efface, sinon la
     // commande reste coincée dans l'onglet Rappels.
     const keepRappel = r.statut === 'a_rappeler' || r.statut === 'injoignable' || r.statut === 'reporte'
-    // Date de confirmation : posée une seule fois, sert à la revue de livraison du lendemain.
-    const confirmeAt = r.statut === 'confirme' ? (o.confirmeAt ?? Date.now()) : o.confirmeAt
+    const nowMs = Date.now()
+    // Confirmé OU livré → pose une date de confirmation (la vente compte pour ce jour).
+    const confirmeAt = (r.statut === 'confirme' || r.statut === 'livre') ? (o.confirmeAt ?? nowMs) : o.confirmeAt
+    const livreAt = r.statut === 'livre' ? (o.livreAt ?? nowMs) : o.livreAt
 
     setOrders((prev) => prev.map((x) => (x.id === o.id ? {
-      ...x, statut: r.statut, tentatives: newTent, total, confirmeAt,
+      ...x, statut: r.statut, tentatives: newTent, total, confirmeAt, livreAt,
       prixNegocie: r.prixNegocie ?? x.prixNegocie, coutLivraison: r.coutLivraison ?? x.coutLivraison,
       produit: r.produit ?? x.produit, quantite: qte, adresse: r.adresse ?? x.adresse,
       commentaire: r.commentaire ?? x.commentaire,
@@ -261,7 +263,8 @@ export default function CloseuseApp({
       if (r.coutLivraison != null) db.cout_livraison = r.coutLivraison
       if (r.adresse != null) db.adresse = r.adresse
       if (r.commentaire) db.dernier_commentaire = r.commentaire
-      if (r.statut === 'confirme' && !o.confirmeAt) db.confirme_at = new Date(confirmeAt!).toISOString()
+      if ((r.statut === 'confirme' || r.statut === 'livre') && !o.confirmeAt) db.confirme_at = new Date(confirmeAt!).toISOString()
+      if (r.statut === 'livre') db.livre_at = new Date(livreAt!).toISOString()
       if (keepRappel && r.rappelAt) {
         const iso = new Date(r.rappelAt).toISOString()
         db.rappel_at = iso; db.rappel_lieu = r.rappelLieu ?? null
@@ -276,7 +279,8 @@ export default function CloseuseApp({
       if (r.rappelAt) void supabase.from('scheduled_callbacks').insert({ order_id: o.id, agent_id: agent?.id ?? null, rappel_at: new Date(r.rappelAt).toISOString(), lieu: r.rappelLieu ?? null, motif: r.statut })
     }
 
-    setCall((c) => { if (!c) return null; const next = c.index + 1; return next < c.queue.length ? { ...c, index: next } : null })
+    // Pas d'enchaînement automatique : on revient à la liste, l'utilisateur choisit la suivante.
+    setCall(null)
   }
 
   // Clôture du matin : livré -> archivé, annulé -> archivé, reporté -> reste en livraison.

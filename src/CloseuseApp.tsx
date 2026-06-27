@@ -164,6 +164,15 @@ export default function CloseuseApp({
   const isArchive = viewFiltre === 'archivees'
   const displayList = isArchive ? archived : liste
 
+  // File d'appel UNIFIÉE (indépendante du filtre affiché) : tout ce qui est à appeler
+  // maintenant = nouvelles + retards, trié par urgence (les plus anciennes/dépassées d'abord).
+  const fileAppel = useMemo(
+    () => scoped
+      .filter((o) => matchFiltre(o, 'a_appeler', now, workingNow) || matchFiltre(o, 'retard', now, workingNow))
+      .sort(byUrgence(now)),
+    [scoped, now, workingNow]
+  )
+
   // Mini tableau de bord des archives (livré / annulé-refus).
   const archStats = useMemo(() => {
     let livre = 0, annule = 0
@@ -215,16 +224,17 @@ export default function CloseuseApp({
   }
   function openAt(o: Order) {
     if (bloqueNouvelle(o)) { setBlockLate(true); return }
-    if (APPELABLES.includes(o.statut)) {
+    // Ordre imposé UNIQUEMENT sur le filtre « À appeler ».
+    if (viewFiltre === 'a_appeler' && APPELABLES.includes(o.statut)) {
       const premiere = displayList.find((x) => APPELABLES.includes(x.statut))
       if (premiere && premiere.id !== o.id) { setOrderBlock(premiere); return }
     }
     const i = displayList.findIndex((x) => x.id === o.id)
     setCall({ queue: displayList, index: Math.max(0, i) })
   }
+  // Bouton unifié : lance toujours la file d'appel (retards en tête), quel que soit le filtre.
   function startQueue() {
-    if (workingNow && counts.retard > 0 && viewFiltre === 'a_appeler') { setBlockLate(true); return }
-    if (liste.length) setCall({ queue: liste, index: 0 })
+    if (fileAppel.length) setCall({ queue: fileAppel, index: 0 })
   }
   function toggleSelect(id: string) {
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -486,9 +496,9 @@ export default function CloseuseApp({
             ) : null
           ) : (
             <div className="cta-wrap">
-              <button className={`cta ${lockLate ? 'lock' : ''}`} onClick={startQueue} disabled={!liste.length}>
-                <i className={`ti ${lockLate ? 'ti-alert-triangle' : 'ti-player-play'}`} aria-hidden="true" />
-                {lockLate ? `Traiter les retards (${liste.length})` : `Lancer les appels (${liste.length})`}
+              <button className="cta" onClick={startQueue} disabled={!fileAppel.length}>
+                <i className="ti ti-player-play" aria-hidden="true" />
+                Lancer les appels ({fileAppel.length})
               </button>
             </div>
           )}

@@ -12,7 +12,8 @@ create extension if not exists pg_net;
 create table if not exists app_config (key text primary key, value text);
 insert into app_config (key, value) values
   ('telegram_token', 'COLLER_VOTRE_TOKEN_BOT'),
-  ('telegram_chat_id', 'COLLER_VOTRE_CHAT_ID')
+  ('telegram_chat_id', 'COLLER_VOTRE_CHAT_ID'),
+  ('notif_force', 'false')   -- 'true' = forcer les notifs (ignore dimanche + horaires)
 on conflict (key) do nothing;
 --   update app_config set value='TON_TOKEN'   where key='telegram_token';
 --   update app_config set value='TON_CHAT_ID' where key='telegram_chat_id';
@@ -32,6 +33,20 @@ begin
   begin dt := deb::time; ft := fin::time; exception when others then return true; end;
   if ft > dt then return cur >= dt and cur < ft;
   else return cur >= dt or cur < ft; end if;
+end; $$;
+
+-- 3b) Notification autorisee ? Par defaut : en heures de travail ET pas le dimanche.
+--     Si app_config.notif_force = 'true', on outrepasse tout (notifs toujours envoyees).
+create or replace function notif_autorisee(p_fuseau text, p_horaires jsonb)
+returns boolean language plpgsql stable as $$
+declare force_on boolean; jour int;
+begin
+  select coalesce(value = 'true', false) into force_on from app_config where key = 'notif_force';
+  if force_on then return true; end if;
+  -- dimanche (dow = 0) selon le fuseau du pays -> pas de notification
+  jour := extract(dow from (now() at time zone coalesce(nullif(p_fuseau,''),'Africa/Abidjan')));
+  if jour = 0 then return false; end if;
+  return in_working_hours(p_fuseau, p_horaires);
 end; $$;
 
 -- 4) Test immediat du branchement Telegram.  select notify_test();
@@ -75,7 +90,7 @@ begin
          or (o.rappel_at is null and o.statut = 'a_appeler'
              and o.appel_deadline is not null and o.appel_deadline < now())
           )
-      and in_working_hours(coalesce(c.fuseau, 'Africa/Abidjan'), a.horaires)
+      and notif_autorisee(coalesce(c.fuseau, 'Africa/Abidjan'), a.horaires)
       and not exists (select 1 from events e where e.order_id = o.id and e.type = 'retard' and e.notifie)
     limit 60
   loop

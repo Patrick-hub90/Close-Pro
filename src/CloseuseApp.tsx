@@ -14,7 +14,7 @@ import Finance from './components/Finance'
 const FILTRES: { id: FiltreId; label: string }[] = [
   { id: 'a_appeler', label: 'À appeler' },
   { id: 'rappels', label: 'Rappels' },
-  { id: 'livraisons', label: 'Livraisons' },
+  { id: 'livraisons', label: 'Confirmé' },
   { id: 'discussion', label: 'En discussion' },
   { id: 'toutes', label: 'Toutes' },
   { id: 'archivees', label: 'Archivées' },
@@ -76,6 +76,7 @@ export default function CloseuseApp({
   const [showPays, setShowPays] = useState(false)
   const [paysList, setPaysList] = useState<{ code: string; nom: string }[]>([])
   const [closers, setClosers] = useState<{ id: string; nom: string; pays: string | null }[]>([])
+  const [livreJour, setLivreJour] = useState(0) // nb de commandes livrées aujourd'hui (bandeau propriétaire)
 
   const nom = (live && agent?.nom) || CLOSEUSE.nom
   const pays = (live && agent?.pays) || CLOSEUSE.pays
@@ -119,6 +120,17 @@ export default function CloseuseApp({
     supabase.from('countries').select('code, nom').then(({ data }) => setPaysList((data as { code: string; nom: string }[]) ?? []))
     supabase.from('agents').select('id, nom, pays').eq('role', 'closer').then(({ data }) => setClosers((data as { id: string; nom: string; pays: string | null }[]) ?? []))
   }, [live, agent])
+
+  // Compteur de livraisons du jour (propriétaire) — basé sur la date de livraison.
+  useEffect(() => {
+    if (!live || !supabase || !isOwner) return
+    let active = true
+    const startISO = new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
+    let q = supabase.from('orders').select('*', { count: 'exact', head: true }).eq('statut', 'livre').gte('livre_at', startISO)
+    if (selectedPays) q = q.eq('pays', selectedPays)
+    q.then(({ count }) => { if (active) setLivreJour(count ?? 0) })
+    return () => { active = false }
+  }, [live, isOwner, selectedPays, orders])
 
   // Moteur de contrainte : alerte (vibration + bip) quand une commande passe en retard.
   const notifiedRef = useRef<Set<string>>(new Set())
@@ -410,7 +422,7 @@ export default function CloseuseApp({
               <div className="es"><b>{counts.a_appeler}</b><span>À appeler</span></div>
               <div className="es"><b>{counts.rappels}</b><span>Rappels</span></div>
               <div className="es"><b>{etat.confirme || 0}</b><span>Confirmées</span></div>
-              <div className="es"><b>{etat.livraison || 0}</b><span>Livraison</span></div>
+              <div className="es"><b>{livreJour}</b><span>Livré</span></div>
             </div>
           ) : null}
 

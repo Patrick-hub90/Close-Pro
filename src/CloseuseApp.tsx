@@ -165,9 +165,9 @@ export default function CloseuseApp({
     return e
   }, [scoped])
 
-  // Verrou de file : une closeuse, en horaires, avec des retards -> doit les traiter d'abord.
-  const lockLate = !!live && !isOwner && workingNow && !selectMode && counts.retard > 0
-  const viewFiltre: FiltreId = lockLate ? 'a_appeler' : filtre
+  // Navigation libre : la discipline est gérée à l'ouverture (fenêtres « retards d'abord » + ordre),
+  // plus par un verrou d'onglets.
+  const viewFiltre: FiltreId = filtre
 
   const liste = useMemo(
     () => scoped.filter((o) => matchFiltre(o, viewFiltre, now, workingNow)).sort(byUrgence(now)),
@@ -427,28 +427,20 @@ export default function CloseuseApp({
           ) : null}
 
           <div className="seg">
-            {FILTRES.map((f) => {
-              const blocked = lockLate && f.id !== 'a_appeler'
-              return (
-                <button key={f.id} disabled={blocked}
-                  className={`${viewFiltre === f.id ? 'on' : ''} ${f.id === 'retard' ? 'alert' : ''} ${blocked ? 'locked' : ''}`}
-                  onClick={() => { if (!blocked) setFiltre(f.id) }}>
-                  {f.label} <span className="n">{f.id === 'archivees' ? (archived.length || '') : counts[f.id]}</span>
-                </button>
-              )
-            })}
+            {FILTRES.map((f) => (
+              <button key={f.id}
+                className={`${viewFiltre === f.id ? 'on' : ''}`}
+                onClick={() => setFiltre(f.id)}>
+                {f.label} <span className="n">{f.id === 'archivees' ? (archived.length || '') : counts[f.id]}</span>
+              </button>
+            ))}
           </div>
 
           {!workingNow && agent?.horaires?.debut ? (
             <div className="hoursbar"><i className="ti ti-player-pause" aria-hidden="true" /> Hors de tes horaires ({agent.horaires.debut}–{agent.horaires.fin}) — décomptes en pause</div>
           ) : null}
 
-          {lockLate ? (
-            <div className="lockbar">
-              <i className="ti ti-lock" aria-hidden="true" />
-              <span><b>{counts.retard} commande{counts.retard > 1 ? 's' : ''} en retard.</b> Traite-les d'abord — les autres listes sont verrouillées tant qu'il reste du retard.</span>
-            </div>
-          ) : counts.retard > 0 && !selectMode ? (
+          {counts.retard > 0 && !selectMode ? (
             <button className="latebar" onClick={() => setFiltre('a_appeler')}>
               <i className="ti ti-alert-triangle" aria-hidden="true" />
               {counts.retard} commande{counts.retard > 1 ? 's' : ''} en retard — à appeler maintenant

@@ -80,11 +80,12 @@ export default function CallMode({
   const [modal, setModal] = useState<{ statut: Statut; label: string; tone: Tone } | null>(null)
   const [schedAt, setSchedAt] = useState('')
   const [costError, setCostError] = useState(false)
+  const [picked, setPicked] = useState<Statut | null>(null) // statut sélectionné (feedback avant fermeture)
   const presets = useMemo(buildPresets, [index])
 
   const oid = o?.id
   useEffect(() => {
-    setComment(''); setShowEdit(false); setGerePuces(false); setNewPuce(''); setModal(null); setSchedAt(''); setHistOpen(false); setCostError(false)
+    setComment(''); setShowEdit(false); setGerePuces(false); setNewPuce(''); setModal(null); setSchedAt(''); setHistOpen(false); setCostError(false); setPicked(null)
     setPrix(o?.prixNegocie ?? o?.prixUnitaire ?? 0)
     setCout(o?.coutLivraison ?? 0)
     setProduit(o?.produit ?? '')
@@ -129,13 +130,16 @@ export default function CallMode({
   // Clic sur un statut : appliqué directement ; ceux à date ouvrent la fenêtre.
   // « Livré » exige un coût de livraison.
   function pick(r: { statut: Statut; label: string; tone: Tone; sched?: boolean }) {
+    if (picked) return // déjà en cours de validation
     if (r.statut === 'livre' && cout <= 0) { setCostError(true); return }
     if (r.sched) {
       const dft = r.statut === 'reporte' ? 86_400_000 : 3600_000
       setSchedAt(toLocalInput(Date.now() + dft))
       setModal({ statut: r.statut, label: r.label, tone: r.tone })
     } else {
-      emit(r.statut)
+      // Feedback visuel : le bouton se remplit (sélectionné), puis on enregistre et on ferme.
+      setPicked(r.statut)
+      setTimeout(() => emit(r.statut), 380)
     }
   }
   function confirmSched() {
@@ -224,9 +228,9 @@ export default function CallMode({
           <>
             <div className="res-h">Clôturer la livraison</div>
             <div className="livr-actions">
-              <button className="lvb liv" onClick={() => pick({ statut: 'livre', label: 'Livré', tone: 'liv' })}><i className="ti ti-check" aria-hidden="true" /> Livré</button>
-              <button className="lvb ann" onClick={() => pick({ statut: 'annule', label: 'Annulé', tone: 'dang' })}><i className="ti ti-x" aria-hidden="true" /> Annulé</button>
-              <button className="lvb rep" onClick={() => pick({ statut: 'reporte', label: 'Reporté', tone: 'rep', sched: true })}><i className="ti ti-calendar-event" aria-hidden="true" /> Reporté</button>
+              <button className={`lvb liv ${picked === 'livre' ? 'on' : ''}`} onClick={() => pick({ statut: 'livre', label: 'Livré', tone: 'liv' })}><i className="ti ti-check" aria-hidden="true" /> Livré</button>
+              <button className={`lvb ann ${picked === 'annule' ? 'on' : ''}`} onClick={() => pick({ statut: 'annule', label: 'Annulé', tone: 'dang' })}><i className="ti ti-x" aria-hidden="true" /> Annulé</button>
+              <button className={`lvb rep ${picked === 'reporte' ? 'on' : ''}`} onClick={() => pick({ statut: 'reporte', label: 'Reporté', tone: 'rep', sched: true })}><i className="ti ti-calendar-event" aria-hidden="true" /> Reporté</button>
             </div>
           </>
         ) : (
@@ -234,7 +238,7 @@ export default function CallMode({
             <div className="res-h">Résultat de l'appel</div>
             <div className="chips">
               {RESULTATS.map((r) => (
-                <button key={r.statut} className={`chip2 ${r.tone} ${o.statut === r.statut ? 'on' : ''}`} onClick={() => pick(r)}>
+                <button key={r.statut} className={`chip2 ${r.tone} ${(picked ?? o.statut) === r.statut ? 'on' : ''}`} onClick={() => pick(r)}>
                   <i className={`ti ${r.icon}`} aria-hidden="true" /> {r.label}
                 </button>
               ))}

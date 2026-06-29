@@ -49,8 +49,8 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
     setTgBusy(false)
     const d = data as { code?: string; bot?: string } | null
     if (!d?.code) return
-    setTgCode(d.code)
     if (d.bot) window.open(`https://t.me/${d.bot}?start=${encodeURIComponent(d.code)}`, '_blank')
+    else setTgCode(d.code) // secours : pas de username de bot configuré
   }
 
   async function savePw(e: React.FormEvent) {

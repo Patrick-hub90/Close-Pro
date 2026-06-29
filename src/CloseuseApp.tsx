@@ -70,8 +70,9 @@ export default function CloseuseApp({
   const [selectMode, setSelectMode] = useState(false)
   const [blockLate, setBlockLate] = useState(false)
   const [orderBlock, setOrderBlock] = useState<Order | null>(null)
-  // Liaison Telegram (closeuse) : barre d'invitation + fenêtre de liaison.
-  const [tgLinked, setTgLinked] = useState(true) // on suppose lié jusqu'à vérification (évite un flash)
+  // Liaison Telegram (closeuse) : barre d'invitation + fenêtre de liaison + pastille.
+  const [tgLinked, setTgLinked] = useState(false)
+  const [tgChecked, setTgChecked] = useState(false) // vérifié au moins une fois (évite un flash)
   const [tgModal, setTgModal] = useState(false)
   const [tgCode, setTgCode] = useState<string | null>(null)
   const [tgDismissed, setTgDismissed] = useState(false)
@@ -145,7 +146,7 @@ export default function CloseuseApp({
       .then(({ data }) => {
         if (!active) return
         const linked = !!(data as { telegram_chat_id?: string } | null)?.telegram_chat_id
-        setTgLinked(linked)
+        setTgLinked(linked); setTgChecked(true)
         if (linked) { setTgModal(false); setTgCode(null) }
       })
     check()
@@ -157,9 +158,13 @@ export default function CloseuseApp({
     const { data } = await supabase.rpc('link_code_generer')
     const d = data as { code?: string; bot?: string } | null
     if (!d?.code) return
-    setTgCode(d.code)
-    // Ouvre directement le bot Telegram avec le code pré-rempli (/start CODE).
-    if (d.bot) window.open(`https://t.me/${d.bot}?start=${encodeURIComponent(d.code)}`, '_blank')
+    if (d.bot) {
+      // Tout en arrière-plan : ouvre le bot avec le code pré-rempli, ferme la fenêtre.
+      window.open(`https://t.me/${d.bot}?start=${encodeURIComponent(d.code)}`, '_blank')
+      setTgModal(false)
+    } else {
+      setTgCode(d.code) // secours : pas de username de bot configuré
+    }
   }
 
   // Moteur de contrainte : alerte (vibration + bip) quand une commande passe en retard.
@@ -437,6 +442,7 @@ export default function CloseuseApp({
           ) : null}
         </div>
         <div className="acts">
+          {tgChecked && tgLinked ? <span className="tgdot" title="Notifications Telegram activées"><i className="ti ti-brand-telegram" aria-hidden="true" /></span> : null}
           <span className={`tscore ${scoreCls}`} title="Ponctualité : part des commandes appelées à temps">
             <i className="ti ti-clock-check" aria-hidden="true" />{score}%
           </span>
@@ -466,7 +472,7 @@ export default function CloseuseApp({
             ))}
           </div>
 
-          {live && !isOwner && !tgLinked && !tgDismissed ? (
+          {live && !isOwner && tgChecked && !tgLinked && !tgDismissed ? (
             <button className="tgbar" onClick={() => setTgModal(true)}>
               <i className="ti ti-brand-telegram" aria-hidden="true" />
               Lie ton Telegram pour recevoir tes notifications
@@ -610,14 +616,13 @@ export default function CloseuseApp({
             <h3>Recevoir les notifications</h3>
             {tgCode ? (
               <>
-                <p>Telegram s'ouvre sur notre bot — appuie sur <b>Démarrer</b>. (Si rien ne s'ouvre, envoie ce code au bot.)</p>
+                <p>Envoie ce code à notre bot Telegram pour finaliser :</p>
                 <div className="tg-code">{tgCode}</div>
-                <p className="tg-wait">La liaison se fait toute seule en ~1 min — garde l'app ouverte.</p>
                 <button onClick={() => setTgModal(false)}>Fermer</button>
               </>
             ) : (
               <>
-                <p>Lie ton Telegram pour être prévenu(e) à chaque commande à appeler.</p>
+                <p>Connecte ton Telegram pour être prévenu(e) à chaque commande à appeler. Telegram va s'ouvrir — appuie juste sur <b>Démarrer</b>.</p>
                 <button onClick={tgGenerate}>Lier maintenant</button>
                 <button className="ghost" onClick={() => { setTgDismissed(true); setTgModal(false) }}>Plus tard</button>
               </>

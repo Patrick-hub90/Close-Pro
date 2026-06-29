@@ -28,6 +28,7 @@ alter table agents add column if not exists telegram_link_code text;
 
 -- 2d) RPC : un agent (closeuse) genere son code de liaison Telegram.
 --     SECURITY DEFINER pour contourner la RLS (la closeuse n'ecrit pas dans agents directement).
+drop function if exists link_code_generer();  -- type de retour change (text -> jsonb)
 create or replace function link_code_generer() returns jsonb language plpgsql security definer set search_path = public as $$
 declare code text; aid uuid; bot text;
 begin

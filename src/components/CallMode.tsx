@@ -111,9 +111,10 @@ export default function CallMode({
   const extraEntries = o.extra
     ? Object.entries(o.extra).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
     : []
-  // La pastille du header reflète toujours la nature réelle du statut.
-  const pillTone = TONE_OF[o.statut] ?? ''
-  const pillLabel = STATUT_LABELS[o.statut] ?? o.statut
+  // La pastille reflète le statut courant — ou celui qu'on vient d'appliquer (picked).
+  const shownStatut = picked ?? o.statut
+  const pillTone = TONE_OF[shownStatut] ?? ''
+  const pillLabel = STATUT_LABELS[shownStatut] ?? shownStatut
   const waText = `Bonjour ${o.client}, confirmation de votre commande ${o.numero} : ${produit}${qte > 1 ? ` (x${qte})` : ''} pour ${fcfa(total, false)}. Pouvez-vous confirmer la livraison ? Merci.`
   const schedMs = fromLocalInput(schedAt)
   const histCount = hist.length + (o.createdAt ? 1 : 0)
@@ -133,7 +134,6 @@ export default function CallMode({
   // Clic sur un statut : appliqué directement ; ceux à date ouvrent la fenêtre.
   // « Livré » exige un coût de livraison.
   function pick(r: { statut: Statut; label: string; tone: Tone; sched?: boolean }) {
-    if (picked) return // déjà en cours de validation
     if (r.statut === 'livre' && cout <= 0) { setCostError(true); return }
     // Commentaire obligatoire pour : à rappeler, reporté, annulé.
     if ((r.statut === 'a_rappeler' || r.statut === 'reporte' || r.statut === 'annule') && !comment.trim()) { setCommentError(true); return }
@@ -142,13 +142,12 @@ export default function CallMode({
       setSchedAt(toLocalInput(Date.now() + dft))
       setModal({ statut: r.statut, label: r.label, tone: r.tone })
     } else {
-      // Feedback visuel : le bouton se remplit (sélectionné), puis on enregistre et on ferme.
-      setPicked(r.statut)
-      setTimeout(() => emit(r.statut), 380)
+      // Applique et marque le statut — SANS fermer la fiche (on peut le changer ou fermer après).
+      emit(r.statut); setPicked(r.statut)
     }
   }
   function confirmSched() {
-    if (modal && schedMs) { emit(modal.statut, schedMs); setModal(null) }
+    if (modal && schedMs) { emit(modal.statut, schedMs); setPicked(modal.statut); setModal(null) }
   }
 
   function ajouterPuce() {
@@ -250,6 +249,12 @@ export default function CallMode({
             </div>
           </>
         )}
+
+        {picked ? (
+          <div className="status-saved">
+            <i className="ti ti-circle-check" aria-hidden="true" /> Statut modifié : <b>{STATUT_LABELS[picked] ?? picked}</b> — enregistré. Tu peux le changer ou revenir.
+          </div>
+        ) : null}
 
         {/* Historique — replié par défaut, avant les détails */}
         <button className="histH" onClick={() => setHistOpen((v) => !v)}>

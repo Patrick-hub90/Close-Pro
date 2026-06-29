@@ -369,8 +369,7 @@ export default function CloseuseApp({
       if (r.rappelAt) void supabase.from('scheduled_callbacks').insert({ order_id: o.id, agent_id: agent?.id ?? null, rappel_at: new Date(r.rappelAt).toISOString(), lieu: r.rappelLieu ?? null, motif: r.statut })
     }
 
-    // Pas d'enchaînement automatique : on revient à la liste, l'utilisateur choisit la suivante.
-    setCall(null)
+    // On NE ferme PAS la fiche : le statut modifié s'affiche, l'utilisateur ferme via la flèche retour.
   }
 
   // Clôture du matin : livré -> archivé, annulé -> archivé, reporté -> reste en livraison.
@@ -405,7 +404,8 @@ export default function CloseuseApp({
     return <CallMode queue={call.queue} index={call.index} onResult={handleResult} onClose={() => setCall(null)} />
   }
 
-  const showSas = tab === 'appels' && !sasDone && sasOrders.length > 0
+  // Le SAS ne s'affiche que sur l'onglet « À appeler » (jamais en parcourant archives/livraisons/etc.).
+  const showSas = tab === 'appels' && filtre === 'a_appeler' && !sasDone && sasOrders.length > 0
   if (showSas) {
     return <div className="app"><MorningSas orders={sasOrders} onDone={() => setSasDone(true)} onResolve={resolveSas} onSetCost={setSasCost} /></div>
   }

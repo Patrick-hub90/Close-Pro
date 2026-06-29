@@ -188,7 +188,9 @@ export default function CloseuseApp({
   // N'apparaissent que les commandes confirmées AVANT aujourd'hui (jamais le jour même).
   // Sans date de confirmation connue, on n'affiche pas (évite le SAS prématuré).
   const sasOrders = live
-    ? scoped.filter((o) => (o.statut === 'confirme' || o.statut === 'livraison') && !!o.confirmeAt && o.confirmeAt < startOfToday)
+    ? scoped.filter((o) => (o.statut === 'confirme' || o.statut === 'livraison') && !!o.confirmeAt && o.confirmeAt < startOfToday
+        // Une livraison reportée ne réapparaît qu'à partir de sa date de re-livraison.
+        && (!o.livraisonPrevue || o.livraisonPrevue <= now))
     : LIVRAISONS
 
   const counts = useMemo(() => {
@@ -377,12 +379,18 @@ export default function CloseuseApp({
   }
 
   // Clôture du matin : livré -> archivé, annulé -> archivé, reporté -> reste en livraison.
-  function resolveSas(orderId: string, issue: 'livre' | 'annule' | 'reporte') {
+  function resolveSas(orderId: string, issue: 'livre' | 'annule' | 'reporte', dateMs?: number) {
     const statut: Statut = issue === 'livre' ? 'livre' : issue === 'annule' ? 'annule' : 'livraison'
     const nowMs = Date.now()
     const ord = orders.find((x) => x.id === orderId)
     setOrders((prev) => prev.map((x) => (x.id === orderId
-      ? { ...x, statut, livreAt: statut === 'livre' ? nowMs : x.livreAt, confirmeAt: statut === 'livre' ? (x.confirmeAt ?? nowMs) : x.confirmeAt } : x)))
+      ? {
+          ...x, statut,
+          livreAt: statut === 'livre' ? nowMs : x.livreAt,
+          confirmeAt: statut === 'livre' ? (x.confirmeAt ?? nowMs) : x.confirmeAt,
+          // Reporté : mémorise la date de re-livraison ; sinon on l'efface.
+          livraisonPrevue: issue === 'reporte' ? dateMs : undefined,
+        } : x)))
     if (live && supabase) {
       const patch: Record<string, any> = { statut }
       if (statut === 'livre') {
@@ -390,6 +398,8 @@ export default function CloseuseApp({
         // Sécurité Finance : une vente sans date de confirmation serait invisible.
         if (ord && !ord.confirmeAt) patch.confirme_at = new Date(nowMs).toISOString()
       }
+      // Reporté : date de re-livraison ; toute autre issue efface le report.
+      patch.livraison_prevue = issue === 'reporte' && dateMs ? new Date(dateMs).toISOString() : null
       supabase.from('orders').update(patch).eq('id', orderId).then(({ error }) => {
         if (error) console.error('[Close-Pro] clôture livraison échouée:', error.message)
       })

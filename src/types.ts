@@ -36,6 +36,7 @@ export interface Order {
   extra?: Record<string, unknown> // colonnes variables du Sheet (non mappees / ajoutees)
   closeuseId?: string     // agent assigne (pour le classement proprietaire)
   confirmeAt?: number     // ms epoch — date de confirmation (revue de livraison le lendemain)
+  livraisonPrevue?: number // ms epoch — re-livraison reportee : la commande ne revient au SAS qu'a cette date
   livreAt?: number        // ms epoch — date de livraison (finance par periode)
   createdAt?: number      // ms epoch — date de reception de la commande
 }

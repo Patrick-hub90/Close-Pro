@@ -4,10 +4,22 @@ import { fcfa } from '../lib'
 
 type Issue = 'livre' | 'annule' | 'reporte'
 
+// Dates de re-livraison : jour entier (la commande revient le matin du jour choisi).
+function startOfDayMs(d: Date) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime() }
+function addDaysMs(n: number) { const x = new Date(); x.setDate(x.getDate() + n); x.setHours(0, 0, 0, 0); return x.getTime() }
+function toDateInput(ms: number) { const d = new Date(ms); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` }
+function fromDateInput(s: string): number | undefined {
+  if (!s) return undefined
+  const [y, m, d] = s.split('-').map(Number)
+  if (!y || !m || !d) return undefined
+  const x = new Date(); x.setFullYear(y, m - 1, d); x.setHours(0, 0, 0, 0); return x.getTime()
+}
+function fmtJour(ms: number) { return new Date(ms).toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: '2-digit' }) }
+
 export default function MorningSas({ orders, onDone, onResolve, onSetCost }: {
   orders: Order[]
   onDone: () => void
-  onResolve?: (id: string, issue: Issue) => void
+  onResolve?: (id: string, issue: Issue, dateMs?: number) => void
   onSetCost?: (id: string, cout: number) => void
 }) {
   // Fige la liste du matin : les cartes ne disparaissent pas au clic.
@@ -20,6 +32,9 @@ export default function MorningSas({ orders, onDone, onResolve, onSetCost }: {
     return m
   })
   const [erreur, setErreur] = useState<string[] | null>(null)
+  // Fenêtre de report : choix de la date de re-livraison.
+  const [repOrder, setRepOrder] = useState<Order | null>(null)
+  const [repDate, setRepDate] = useState('')
   const done = Object.keys(resolved).length
   const total = list.length
 
@@ -28,8 +43,18 @@ export default function MorningSas({ orders, onDone, onResolve, onSetCost }: {
   const mark = (o: Order, issue: Issue) => {
     // Livré exige un coût de livraison.
     if (issue === 'livre' && !coutDe(o)) { setErreur([o.numero]); return }
+    // Reporté : on demande d'abord la date de re-livraison.
+    if (issue === 'reporte') { setRepOrder(o); setRepDate(toDateInput(addDaysMs(1))); return }
     setResolved((p) => ({ ...p, [o.id]: issue }))
     onResolve?.(o.id, issue)
+  }
+
+  const confirmReport = () => {
+    const ms = fromDateInput(repDate)
+    if (!repOrder || !ms) return
+    setResolved((p) => ({ ...p, [repOrder.id]: 'reporte' }))
+    onResolve?.(repOrder.id, 'reporte', ms)
+    setRepOrder(null)
   }
 
   const saisirCout = (o: Order, v: number) => {
@@ -46,6 +71,8 @@ export default function MorningSas({ orders, onDone, onResolve, onSetCost }: {
     for (const o of restants) { next[o.id] = 'livre'; onResolve?.(o.id, 'livre') }
     setResolved(next)
   }
+
+  const repMs = fromDateInput(repDate)
 
   return (
     <div className="app">
@@ -105,6 +132,29 @@ export default function MorningSas({ orders, onDone, onResolve, onSetCost }: {
           {done < total ? `Commencer ma journée (${total - done} en attente)` : 'Commencer ma journée'}
         </button>
       </div>
+
+      {/* Fenêtre de report : date de re-livraison */}
+      {repOrder ? (
+        <div className="sched-ov" onClick={() => setRepOrder(null)}>
+          <div className="sched-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="sm-head">
+              <span>Reporter la livraison · {repOrder.numero}</span>
+              <button className="sm-x" onClick={() => setRepOrder(null)} aria-label="Fermer"><i className="ti ti-x" aria-hidden="true" /></button>
+            </div>
+            <div className="sched-presets">
+              {[{ label: 'Demain', n: 1 }, { label: 'Dans 2 jours', n: 2 }, { label: 'Dans 3 jours', n: 3 }].map((p) => (
+                <button key={p.n} className={repMs === addDaysMs(p.n) ? 'on' : ''} onClick={() => setRepDate(toDateInput(addDaysMs(p.n)))}>{p.label}</button>
+              ))}
+            </div>
+            <label className="sched-dt"><span>Date précise</span>
+              <input type="date" value={repDate} min={toDateInput(addDaysMs(1))} onChange={(e) => setRepDate(e.target.value)} />
+            </label>
+            <button className="sm-ok rep" disabled={!repMs || (repMs <= startOfDayMs(new Date()))} onClick={confirmReport}>
+              <i className="ti ti-check" aria-hidden="true" /> Reporter {repMs ? `· ${fmtJour(repMs)}` : ''}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Fenêtre d'erreur : coût de livraison manquant */}
       {erreur ? (

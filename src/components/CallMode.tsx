@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Order, Statut, CallResult } from '../types'
 import { fcfa, telLink, waLink } from '../lib'
 import { supabase } from '../lib/supabase'
@@ -83,6 +83,17 @@ export default function CallMode({
   const [picked, setPicked] = useState<Statut | null>(null) // statut sélectionné (feedback avant fermeture)
   const [commentError, setCommentError] = useState(false) // commentaire obligatoire manquant
   const presets = useMemo(buildPresets, [index])
+  const commentRef = useRef<HTMLTextAreaElement>(null)
+  const coutRef = useRef<HTMLInputElement>(null)
+
+  // Amène l'utilisateur droit au champ manquant (scroll + focus + clavier), sans fenêtre bloquante.
+  function focusChamp(el: HTMLElement | null) {
+    if (!el) return
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.focus({ preventScroll: true })
+    })
+  }
 
   const oid = o?.id
   useEffect(() => {
@@ -134,9 +145,9 @@ export default function CallMode({
   // Clic sur un statut : appliqué directement ; ceux à date ouvrent la fenêtre.
   // « Livré » exige un coût de livraison.
   function pick(r: { statut: Statut; label: string; tone: Tone; sched?: boolean }) {
-    if (r.statut === 'livre' && cout <= 0) { setCostError(true); return }
+    if (r.statut === 'livre' && cout <= 0) { setCostError(true); focusChamp(coutRef.current); return }
     // Commentaire obligatoire pour : à rappeler, reporté, annulé.
-    if ((r.statut === 'a_rappeler' || r.statut === 'reporte' || r.statut === 'annule') && !comment.trim()) { setCommentError(true); return }
+    if ((r.statut === 'a_rappeler' || r.statut === 'reporte' || r.statut === 'annule') && !comment.trim()) { setCommentError(true); focusChamp(commentRef.current); return }
     if (r.sched) {
       const dft = r.statut === 'reporte' ? 86_400_000 : 3600_000
       setSchedAt(toLocalInput(Date.now() + dft))
@@ -202,12 +213,13 @@ export default function CallMode({
 
         <label className={`livz ${costError ? 'err' : ''}`}>
           <span><i className="ti ti-truck" aria-hidden="true" /> Coût de livraison (FCFA){costError ? ' — obligatoire pour livrer' : ''}</span>
-          <input type="number" inputMode="numeric" min={0} value={cout || ''} onChange={(e) => { setCout(+e.target.value || 0); setCostError(false) }} placeholder="ex. 2 500" />
+          <input ref={coutRef} type="number" inputMode="numeric" min={0} value={cout || ''} onChange={(e) => { setCout(+e.target.value || 0); setCostError(false) }} placeholder="ex. 2 500" />
         </label>
 
         {/* Commentaire AVANT le choix du statut : il part avec le changement enregistré. */}
         <div className="cm-block">
-          <textarea className={`cm-area ${commentError ? 'err' : ''}`} placeholder="Commentaire (obligatoire pour rappeler / reporter / annuler)…" value={comment} onChange={(e) => { setComment(e.target.value); setCommentError(false) }} rows={2} />
+          <textarea ref={commentRef} className={`cm-area ${commentError ? 'err' : ''}`} placeholder="Commentaire (obligatoire pour rappeler / reporter / annuler)…" value={comment} onChange={(e) => { setComment(e.target.value); setCommentError(false) }} rows={2} />
+          {commentError ? <div className="cm-err"><i className="ti ti-alert-triangle" aria-hidden="true" /> Commentaire obligatoire pour rappeler, reporter ou annuler.</div> : null}
           <div className="qc">
             {puces.map((p) => (
               <span key={p} className="qc-chip">
@@ -325,29 +337,6 @@ export default function CallMode({
         </div>
       ) : null}
 
-      {/* Fenêtre : coût de livraison obligatoire avant « Livré » */}
-      {costError ? (
-        <div className="err-overlay" onClick={() => setCostError(false)}>
-          <div className="errbox" onClick={(e) => e.stopPropagation()}>
-            <i className="ti ti-alert-triangle" aria-hidden="true" />
-            <h3>Coût de livraison manquant</h3>
-            <p>Renseigne le coût de livraison avant de marquer cette commande « Livré ».</p>
-            <button onClick={() => setCostError(false)}>Compris</button>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Fenêtre : commentaire obligatoire (rappeler / reporter / annuler) */}
-      {commentError ? (
-        <div className="err-overlay" onClick={() => setCommentError(false)}>
-          <div className="errbox" onClick={(e) => e.stopPropagation()}>
-            <i className="ti ti-message-2-exclamation" aria-hidden="true" />
-            <h3>Commentaire obligatoire</h3>
-            <p>Écris d'abord un commentaire pour expliquer la raison (rappel, report ou annulation).</p>
-            <button onClick={() => setCommentError(false)}>Écrire un commentaire</button>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }

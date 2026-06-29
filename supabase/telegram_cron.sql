@@ -13,7 +13,8 @@ create table if not exists app_config (key text primary key, value text);
 insert into app_config (key, value) values
   ('telegram_token', 'COLLER_VOTRE_TOKEN_BOT'),
   ('telegram_chat_id', 'COLLER_VOTRE_CHAT_ID'),
-  ('notif_force', 'false')   -- 'true' = forcer les notifs (ignore dimanche + horaires)
+  ('notif_force', 'false'),                              -- 'true' = forcer (ignore dimanche + horaires)
+  ('telegram_bot_username', 'COLLER_USERNAME_DU_BOT')   -- sans @ (ex. CloseProBot), pour le bouton "Lier"
 on conflict (key) do nothing;
 --   update app_config set value='TON_TOKEN'   where key='telegram_token';
 --   update app_config set value='TON_CHAT_ID' where key='telegram_chat_id';
@@ -27,14 +28,15 @@ alter table agents add column if not exists telegram_link_code text;
 
 -- 2d) RPC : un agent (closeuse) genere son code de liaison Telegram.
 --     SECURITY DEFINER pour contourner la RLS (la closeuse n'ecrit pas dans agents directement).
-create or replace function link_code_generer() returns text language plpgsql security definer set search_path = public as $$
-declare code text; aid uuid;
+create or replace function link_code_generer() returns jsonb language plpgsql security definer set search_path = public as $$
+declare code text; aid uuid; bot text;
 begin
   select id into aid from agents where auth_uid = auth.uid();
   if aid is null then return null; end if;
   code := 'LIER-' || lpad((floor(random() * 9000) + 1000)::int::text, 4, '0');
   update agents set telegram_link_code = code where id = aid;
-  return code;
+  select value into bot from app_config where key = 'telegram_bot_username';
+  return jsonb_build_object('code', code, 'bot', coalesce(nullif(bot, 'COLLER_USERNAME_DU_BOT'), ''));
 end $$;
 grant execute on function link_code_generer() to authenticated;
 
@@ -182,7 +184,7 @@ end; $$;
 --     quand le texte correspond au code de liaison d'un agent, enregistre son chat_id.
 --     Fonctionne en 2 temps : traite la reponse de l'appel precedent, puis relance un appel.
 create or replace function telegram_sync_links() returns void language plpgsql as $$
-declare tok text; req bigint; resp text; j jsonb; u jsonb; off bigint; maxid bigint;
+declare tok text; req bigint; resp text; j jsonb; u jsonb; off bigint; maxid bigint; vtxt text;
 begin
   select value into tok from app_config where key = 'telegram_token';
   if tok is null or tok like 'COLLER%' then return; end if;
@@ -198,10 +200,12 @@ begin
       if j is not null and coalesce((j->>'ok')::boolean, false) then
         maxid := 0;
         for u in select jsonb_array_elements(j->'result') loop
-          if (u->'message'->>'text') is not null and (u->'message'->'chat'->>'id') is not null then
+          vtxt := trim(coalesce(u->'message'->>'text', ''));
+          -- Lien profond "t.me/bot?start=CODE" => message "/start CODE" : on enleve le prefixe.
+          if vtxt like '/start %' then vtxt := trim(substring(vtxt from 8)); end if;
+          if vtxt <> '' and (u->'message'->'chat'->>'id') is not null then
             update agents set telegram_chat_id = (u->'message'->'chat'->>'id'), telegram_link_code = null
-            where telegram_link_code is not null
-              and upper(telegram_link_code) = upper(trim(u->'message'->>'text'));
+            where telegram_link_code is not null and upper(telegram_link_code) = upper(vtxt);
           end if;
           maxid := greatest(maxid, coalesce((u->>'update_id')::bigint, 0));
         end loop;

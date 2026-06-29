@@ -155,7 +155,11 @@ export default function CloseuseApp({
   async function tgGenerate() {
     if (!supabase) return
     const { data } = await supabase.rpc('link_code_generer')
-    if (data) setTgCode(data as string)
+    const d = data as { code?: string; bot?: string } | null
+    if (!d?.code) return
+    setTgCode(d.code)
+    // Ouvre directement le bot Telegram avec le code pré-rempli (/start CODE).
+    if (d.bot) window.open(`https://t.me/${d.bot}?start=${encodeURIComponent(d.code)}`, '_blank')
   }
 
   // Moteur de contrainte : alerte (vibration + bip) quand une commande passe en retard.
@@ -606,7 +610,7 @@ export default function CloseuseApp({
             <h3>Recevoir les notifications</h3>
             {tgCode ? (
               <>
-                <p>Ouvre notre bot Telegram, démarre-le et envoie-lui ce code :</p>
+                <p>Telegram s'ouvre sur notre bot — appuie sur <b>Démarrer</b>. (Si rien ne s'ouvre, envoie ce code au bot.)</p>
                 <div className="tg-code">{tgCode}</div>
                 <p className="tg-wait">La liaison se fait toute seule en ~1 min — garde l'app ouverte.</p>
                 <button onClick={() => setTgModal(false)}>Fermer</button>

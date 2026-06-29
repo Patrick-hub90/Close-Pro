@@ -47,7 +47,10 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
     setTgBusy(true)
     const { data } = await supabase.rpc('link_code_generer')
     setTgBusy(false)
-    if (data) setTgCode(data as string)
+    const d = data as { code?: string; bot?: string } | null
+    if (!d?.code) return
+    setTgCode(d.code)
+    if (d.bot) window.open(`https://t.me/${d.bot}?start=${encodeURIComponent(d.code)}`, '_blank')
   }
 
   async function savePw(e: React.FormEvent) {
@@ -84,9 +87,9 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
           <div className="acct-ok"><i className="ti ti-brand-telegram" aria-hidden="true" /> Telegram lié — tu reçois les notifications de commandes à appeler.</div>
         ) : tgCode ? (
           <>
-            <div className="acct-hint"><b>1.</b> Ouvre notre bot Telegram et démarre-le. <b>2.</b> Envoie-lui exactement ce code :</div>
+            <div className="acct-hint">Telegram s'ouvre sur le bot — appuie sur <b>Démarrer</b>. Si rien ne s'ouvre, envoie ce code :</div>
             <div className="tg-code">{tgCode}</div>
-            <div className="acct-hint">La liaison se fait toute seule en ~1 minute (laisse cette page ouverte).</div>
+            <div className="acct-hint">La liaison se fait toute seule en ~1 minute.</div>
           </>
         ) : (
           <>

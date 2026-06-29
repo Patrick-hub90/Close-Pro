@@ -65,7 +65,10 @@ export default function CloseuseApp({
   const [loading, setLoading] = useState<boolean>(!!live)
   const [filtre, setFiltre] = useState<FiltreId>('a_appeler')
   const [tab, setTab] = useState<Tab>('appels')
-  const [sasDone, setSasDone] = useState(false)
+  // Revue du matin déjà passée aujourd'hui ? Mémorisé par jour pour ne pas resurgir à chaque rechargement.
+  const [sasDone, setSasDone] = useState(() => {
+    try { return localStorage.getItem('closepro_sas_jour') === new Date().toLocaleDateString('en-CA') } catch { return false }
+  })
   const [call, setCall] = useState<{ queue: Order[]; index: number } | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [blockLate, setBlockLate] = useState(false)
@@ -423,7 +426,7 @@ export default function CloseuseApp({
   // Le SAS ne s'affiche que sur l'onglet « À appeler » (jamais en parcourant archives/livraisons/etc.).
   const showSas = tab === 'appels' && filtre === 'a_appeler' && !sasDone && sasOrders.length > 0
   if (showSas) {
-    return <div className="app"><MorningSas orders={sasOrders} onDone={() => setSasDone(true)} onResolve={resolveSas} onSetCost={setSasCost} /></div>
+    return <div className="app"><MorningSas orders={sasOrders} onDone={() => { setSasDone(true); try { localStorage.setItem('closepro_sas_jour', new Date().toLocaleDateString('en-CA')) } catch { /* quota */ } }} onResolve={resolveSas} onSetCost={setSasCost} /></div>
   }
 
   const emptySub = filtre === 'a_appeler' ? 'Aucune commande à appeler pour le moment.'

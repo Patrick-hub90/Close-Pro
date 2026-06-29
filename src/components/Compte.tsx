@@ -29,6 +29,27 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
     setNotifBusy(false)
   }
 
+  // Liaison Telegram : génère un code, la closeuse l'envoie au bot, le serveur capture son chat_id.
+  const [tgLinked, setTgLinked] = useState(false)
+  const [tgCode, setTgCode] = useState<string | null>(null)
+  const [tgBusy, setTgBusy] = useState(false)
+  useEffect(() => {
+    if (!supabase || !agent?.id) return
+    let active = true
+    const check = () => supabase!.from('agents').select('telegram_chat_id').eq('id', agent.id!).maybeSingle()
+      .then(({ data }) => { if (active && (data as { telegram_chat_id?: string } | null)?.telegram_chat_id) { setTgLinked(true); setTgCode(null) } })
+    check()
+    const id = setInterval(check, 6000)
+    return () => { active = false; clearInterval(id) }
+  }, [agent?.id])
+  async function genCode() {
+    if (!supabase) return
+    setTgBusy(true)
+    const { data } = await supabase.rpc('link_code_generer')
+    setTgBusy(false)
+    if (data) setTgCode(data as string)
+  }
+
   async function savePw(e: React.FormEvent) {
     e.preventDefault()
     if (pw.length < 6) { setPwMsg({ txt: '6 caractères minimum.' }); return }
@@ -55,6 +76,24 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
           {pwMsg ? <div className={pwMsg.ok ? 'acct-ok' : 'acct-err'}>{pwMsg.txt}</div> : null}
           <button type="submit" disabled={pwBusy}>{pwBusy ? 'Mise à jour…' : 'Mettre à jour'}</button>
         </form>
+      </section>
+
+      <section className="acct">
+        <div className="acct-t">Mon Telegram</div>
+        {tgLinked ? (
+          <div className="acct-ok"><i className="ti ti-brand-telegram" aria-hidden="true" /> Telegram lié — tu reçois les notifications de commandes à appeler.</div>
+        ) : tgCode ? (
+          <>
+            <div className="acct-hint"><b>1.</b> Ouvre notre bot Telegram et démarre-le. <b>2.</b> Envoie-lui exactement ce code :</div>
+            <div className="tg-code">{tgCode}</div>
+            <div className="acct-hint">La liaison se fait toute seule en ~1 minute (laisse cette page ouverte).</div>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={genCode} disabled={tgBusy}><i className="ti ti-brand-telegram" aria-hidden="true" /> {tgBusy ? '…' : 'Lier mon Telegram'}</button>
+            <div className="acct-hint">Pour recevoir une notification à chaque commande à appeler.</div>
+          </>
+        )}
       </section>
 
       {isOwner ? (

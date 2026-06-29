@@ -23,6 +23,20 @@ alter table call_attempts add column if not exists notifie boolean default false
 
 -- 2c) Chat Telegram de chaque closeuse (pour ses notifications individuelles).
 alter table agents add column if not exists telegram_chat_id text;
+alter table agents add column if not exists telegram_link_code text;
+
+-- 2d) RPC : un agent (closeuse) genere son code de liaison Telegram.
+--     SECURITY DEFINER pour contourner la RLS (la closeuse n'ecrit pas dans agents directement).
+create or replace function link_code_generer() returns text language plpgsql security definer set search_path = public as $$
+declare code text; aid uuid;
+begin
+  select id into aid from agents where auth_uid = auth.uid();
+  if aid is null then return null; end if;
+  code := 'LIER-' || lpad((floor(random() * 9000) + 1000)::int::text, 4, '0');
+  update agents set telegram_link_code = code where id = aid;
+  return code;
+end $$;
+grant execute on function link_code_generer() to authenticated;
 
 -- 3) Heures de travail (selon le fuseau du pays). Pas d'horaires = toujours actif.
 create or replace function in_working_hours(p_fuseau text, p_horaires jsonb)
@@ -164,11 +178,55 @@ begin
   end loop;
 end; $$;
 
--- 7) Scan chaque minute : retards (proprietaire) + commandes a appeler (closeuses).
+-- 6c) Liaison Telegram automatique : lit les messages recus par le bot (getUpdates) et,
+--     quand le texte correspond au code de liaison d'un agent, enregistre son chat_id.
+--     Fonctionne en 2 temps : traite la reponse de l'appel precedent, puis relance un appel.
+create or replace function telegram_sync_links() returns void language plpgsql as $$
+declare tok text; req bigint; resp text; j jsonb; u jsonb; off bigint; maxid bigint;
+begin
+  select value into tok from app_config where key = 'telegram_token';
+  if tok is null or tok like 'COLLER%' then return; end if;
+
+  -- 1) Traiter la reponse du getUpdates precedent (pg_net stocke le corps dans net._http_response)
+  select coalesce(value, '0')::bigint into req from app_config where key = 'tg_req';
+  if req is not null and req > 0 then
+    begin
+      select content into resp from net._http_response where id = req;
+    exception when others then resp := null; end;
+    if resp is not null then
+      begin j := resp::jsonb; exception when others then j := null; end;
+      if j is not null and coalesce((j->>'ok')::boolean, false) then
+        maxid := 0;
+        for u in select jsonb_array_elements(j->'result') loop
+          if (u->'message'->>'text') is not null and (u->'message'->'chat'->>'id') is not null then
+            update agents set telegram_chat_id = (u->'message'->'chat'->>'id'), telegram_link_code = null
+            where telegram_link_code is not null
+              and upper(telegram_link_code) = upper(trim(u->'message'->>'text'));
+          end if;
+          maxid := greatest(maxid, coalesce((u->>'update_id')::bigint, 0));
+        end loop;
+        if maxid > 0 then
+          insert into app_config(key, value) values ('tg_offset', (maxid + 1)::text)
+          on conflict (key) do update set value = excluded.value;
+        end if;
+      end if;
+      begin delete from net._http_response where id = req; exception when others then null; end;
+    end if;
+  end if;
+
+  -- 2) Relancer un getUpdates pour le prochain tick
+  select coalesce(value, '0')::bigint into off from app_config where key = 'tg_offset';
+  select net.http_get('https://api.telegram.org/bot' || tok || '/getUpdates?offset=' || off || '&limit=30&timeout=0') into req;
+  insert into app_config(key, value) values ('tg_req', req::text)
+  on conflict (key) do update set value = excluded.value;
+end $$;
+
+-- 7) Scan chaque minute : retards (proprietaire) + commandes a appeler (closeuses) + liaisons Telegram.
 create or replace function notify_scan() returns void language plpgsql as $$
 begin
   perform notify_late_orders();
   perform notify_closeuses();
+  perform telegram_sync_links();
 end; $$;
 
 select cron.unschedule('close-pro-sla') where exists (select 1 from cron.job where jobname = 'close-pro-sla');

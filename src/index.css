@@ -328,6 +328,7 @@ a { color: inherit; text-decoration: none; }
 .tgl.on { background: var(--green); }
 .tgl.on span { transform: translateX(20px); }
 .tgl:disabled { opacity: 0.6; }
+.tg-code { font-size: 22px; font-weight: 700; letter-spacing: 3px; text-align: center; background: var(--navy-bg); color: var(--navy); padding: 13px; border-radius: var(--radius-sm); margin: 8px 0; font-variant-numeric: tabular-nums; }
 
 /* Écrans d'erreur / boot */
 .boot-err { text-align: center; padding: 56px 24px; max-width: 360px; margin: 0 auto; }

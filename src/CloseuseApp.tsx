@@ -273,7 +273,8 @@ export default function CloseuseApp({
     const prix = r.prixNegocie ?? o.prixNegocie ?? o.prixUnitaire
     const qte = r.quantite ?? o.quantite
     const cout = r.coutLivraison ?? o.coutLivraison ?? 0
-    const total = Math.round(prix) * qte + Math.round(cout)
+    // Montant net = prix × quantité − frais de livraison (déduits).
+    const total = Math.max(0, Math.round(prix) * qte - Math.round(cout))
     const newTent = r.statut === 'injoignable' ? o.tentatives + 1 : o.tentatives
     // Un rappel n'est pertinent que pour "à rappeler" / "injoignable" / "reporté". Tout autre
     // résultat (confirmé, whatsapp, livré…) n'a pas d'horaire : on efface l'horodatage.
@@ -360,7 +361,7 @@ export default function CloseuseApp({
     setOrders((prev) => prev.map((x) => {
       if (x.id !== orderId) return x
       const base = (x.prixNegocie ?? x.prixUnitaire) * x.quantite
-      return { ...x, coutLivraison: cout, total: base + cout }
+      return { ...x, coutLivraison: cout, total: Math.max(0, base - cout) }
     }))
     if (live && supabase) void supabase.from('orders').update({ cout_livraison: cout }).eq('id', orderId)
   }

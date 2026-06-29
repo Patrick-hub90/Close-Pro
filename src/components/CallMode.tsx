@@ -81,11 +81,12 @@ export default function CallMode({
   const [schedAt, setSchedAt] = useState('')
   const [costError, setCostError] = useState(false)
   const [picked, setPicked] = useState<Statut | null>(null) // statut sélectionné (feedback avant fermeture)
+  const [commentError, setCommentError] = useState(false) // commentaire obligatoire manquant
   const presets = useMemo(buildPresets, [index])
 
   const oid = o?.id
   useEffect(() => {
-    setComment(''); setShowEdit(false); setGerePuces(false); setNewPuce(''); setModal(null); setSchedAt(''); setHistOpen(false); setCostError(false); setPicked(null)
+    setComment(''); setShowEdit(false); setGerePuces(false); setNewPuce(''); setModal(null); setSchedAt(''); setHistOpen(false); setCostError(false); setPicked(null); setCommentError(false)
     setPrix(o?.prixNegocie ?? o?.prixUnitaire ?? 0)
     setCout(o?.coutLivraison ?? 0)
     setProduit(o?.produit ?? '')
@@ -103,7 +104,8 @@ export default function CallMode({
   // Commande confirmée / en livraison → écran de clôture (Livré / Annulé / Reporté).
   // (Reporté n'est plus ici : il devient un rappel et s'ouvre en mode appel.)
   const isLivraison = o.statut === 'confirme' || o.statut === 'livraison'
-  const total = Math.max(0, Math.round(prix)) * Math.max(1, qte) + Math.max(0, Math.round(cout))
+  // Montant net de la commande = prix × quantité − frais de livraison (les frais sont déduits).
+  const total = Math.max(0, Math.max(0, Math.round(prix)) * Math.max(1, qte) - Math.max(0, Math.round(cout)))
   // Détails : toutes les colonnes du Sheet, y compris les valeurs sans nom de colonne.
   const extraEntries = o.extra
     ? Object.entries(o.extra).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
@@ -132,6 +134,8 @@ export default function CallMode({
   function pick(r: { statut: Statut; label: string; tone: Tone; sched?: boolean }) {
     if (picked) return // déjà en cours de validation
     if (r.statut === 'livre' && cout <= 0) { setCostError(true); return }
+    // Commentaire obligatoire pour : à rappeler, reporté, annulé.
+    if ((r.statut === 'a_rappeler' || r.statut === 'reporte' || r.statut === 'annule') && !comment.trim()) { setCommentError(true); return }
     if (r.sched) {
       const dft = r.statut === 'reporte' ? 86_400_000 : 3600_000
       setSchedAt(toLocalInput(Date.now() + dft))
@@ -203,7 +207,7 @@ export default function CallMode({
 
         {/* Commentaire AVANT le choix du statut : il part avec le changement enregistré. */}
         <div className="cm-block">
-          <textarea className="cm-area" placeholder="Commentaire (ajouté à l'historique)…" value={comment} onChange={(e) => setComment(e.target.value)} rows={2} />
+          <textarea className={`cm-area ${commentError ? 'err' : ''}`} placeholder="Commentaire (obligatoire pour rappeler / reporter / annuler)…" value={comment} onChange={(e) => { setComment(e.target.value); setCommentError(false) }} rows={2} />
           <div className="qc">
             {puces.map((p) => (
               <span key={p} className="qc-chip">
@@ -322,6 +326,18 @@ export default function CallMode({
             <h3>Coût de livraison manquant</h3>
             <p>Renseigne le coût de livraison avant de marquer cette commande « Livré ».</p>
             <button onClick={() => setCostError(false)}>Compris</button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Fenêtre : commentaire obligatoire (rappeler / reporter / annuler) */}
+      {commentError ? (
+        <div className="err-overlay" onClick={() => setCommentError(false)}>
+          <div className="errbox" onClick={(e) => e.stopPropagation()}>
+            <i className="ti ti-message-2-exclamation" aria-hidden="true" />
+            <h3>Commentaire obligatoire</h3>
+            <p>Écris d'abord un commentaire pour expliquer la raison (rappel, report ou annulation).</p>
+            <button onClick={() => setCommentError(false)}>Écrire un commentaire</button>
           </div>
         </div>
       ) : null}

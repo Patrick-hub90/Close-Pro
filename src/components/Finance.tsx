@@ -51,8 +51,9 @@ function Finance({ pays }: { pays?: string }) {
       if (!active) return
       if (error) { setErr(error.message); setLoading(false); return }
       setLignes((data ?? []).map((d: any) => {
-        const recu = d.total ?? 0, cout = d.cout_livraison ?? 0
-        return { id: d.id, numero: d.numero, adresse: d.adresse || d.region || '—', cout, recu, net: recu - cout }
+        // total est déjà NET (prix − frais). On reconstruit l'encaissé brut = net + frais.
+        const cout = d.cout_livraison ?? 0, net = d.total ?? 0
+        return { id: d.id, numero: d.numero, adresse: d.adresse || d.region || '—', cout, net, recu: net + cout }
       }))
       setLoading(false)
     })
@@ -63,7 +64,8 @@ function Finance({ pays }: { pays?: string }) {
     let cout = 0, recu = 0
     for (const l of lignes) { cout += l.cout; recu += l.recu }
     const nb = lignes.length
-    return { cout, recu, net: recu - cout, nb, panier: nb ? Math.round(recu / nb) : 0 }
+    const net = recu - cout
+    return { cout, recu, net, nb, panier: nb ? Math.round(net / nb) : 0 }
   }, [lignes])
 
   return (
@@ -84,13 +86,13 @@ function Finance({ pays }: { pays?: string }) {
 
       {/* CA hero */}
       <div className="fin-hero">
-        <div className="fh-l">Chiffre d'affaires encaissé</div>
-        <div className="fh-v">{fcfa(tot.recu, false)}</div>
+        <div className="fh-l">Chiffre d'affaires net (frais déduits)</div>
+        <div className="fh-v">{fcfa(tot.net, false)}</div>
         <div className="fh-s"><i className="ti ti-package" aria-hidden="true" /> {tot.nb} livrée{tot.nb > 1 ? 's' : ''} · panier moyen {fcfa(tot.panier)}</div>
       </div>
 
       <div className="fin-stats">
-        <div className="fs net"><span>Net (reçu − livraison)</span><b>{fcfa(tot.net)}</b></div>
+        <div className="fs"><span>Encaissé (brut)</span><b>{fcfa(tot.recu)}</b></div>
         <div className="fs"><span>Frais de livraison</span><b>{fcfa(tot.cout)}</b></div>
       </div>
 
@@ -118,7 +120,7 @@ function Finance({ pays }: { pays?: string }) {
         </div>
       )}
 
-      <div className="fin-note"><i className="ti ti-info-circle" aria-hidden="true" /> Une vente compte pour son jour de confirmation. « Net » = reçu − coût de livraison.</div>
+      <div className="fin-note"><i className="ti ti-info-circle" aria-hidden="true" /> Une vente compte pour son jour de confirmation. Le « Net » a déjà les frais de livraison déduits ; « Reçu » = encaissé auprès du client (net + frais).</div>
     </div>
   )
 }

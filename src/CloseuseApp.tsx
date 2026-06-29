@@ -142,15 +142,16 @@ export default function CloseuseApp({
   useEffect(() => {
     if (!live || !supabase || !agent?.id) return
     let active = true
-    const check = () => supabase!.from('agents').select('telegram_chat_id').eq('id', agent.id!).maybeSingle()
+    // telegram_relier() lit les messages du bot et lie si un code correspond ; renvoie true si lié.
+    const check = () => supabase!.rpc('telegram_relier')
       .then(({ data }) => {
         if (!active) return
-        const linked = !!(data as { telegram_chat_id?: string } | null)?.telegram_chat_id
+        const linked = data === true
         setTgLinked(linked); setTgChecked(true)
         if (linked) { setTgModal(false); setTgCode(null) }
       })
     check()
-    const id = setInterval(check, 8000)
+    const id = setInterval(check, 6000)
     return () => { active = false; clearInterval(id) }
   }, [live, agent])
   async function tgGenerate() {

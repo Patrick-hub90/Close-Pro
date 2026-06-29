@@ -36,8 +36,8 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
   useEffect(() => {
     if (!supabase || !agent?.id) return
     let active = true
-    const check = () => supabase!.from('agents').select('telegram_chat_id').eq('id', agent.id!).maybeSingle()
-      .then(({ data }) => { if (active && (data as { telegram_chat_id?: string } | null)?.telegram_chat_id) { setTgLinked(true); setTgCode(null) } })
+    const check = () => supabase!.rpc('telegram_relier')
+      .then(({ data }) => { if (active && data === true) { setTgLinked(true); setTgCode(null) } })
     check()
     const id = setInterval(check, 6000)
     return () => { active = false; clearInterval(id) }

@@ -7,6 +7,7 @@
 -- 1) Extensions
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
+create extension if not exists http with schema extensions;  -- requetes HTTP synchrones (liaison Telegram)
 
 -- 2) Config Telegram (ne pas ecraser des valeurs deja saisies)
 create table if not exists app_config (key text primary key, value text);
@@ -14,7 +15,7 @@ insert into app_config (key, value) values
   ('telegram_token', 'COLLER_VOTRE_TOKEN_BOT'),
   ('telegram_chat_id', 'COLLER_VOTRE_CHAT_ID'),
   ('notif_force', 'false'),                              -- 'true' = forcer (ignore dimanche + horaires)
-  ('telegram_bot_username', 'COLLER_USERNAME_DU_BOT')   -- sans @ (ex. CloseProBot), pour le bouton "Lier"
+  ('telegram_bot_username', 'CloseProBot')   -- sans @, pour le bouton "Lier mon Telegram"
 on conflict (key) do nothing;
 --   update app_config set value='TON_TOKEN'   where key='telegram_token';
 --   update app_config set value='TON_CHAT_ID' where key='telegram_chat_id';
@@ -40,6 +41,36 @@ begin
   return jsonb_build_object('code', code, 'bot', coalesce(nullif(bot, 'COLLER_USERNAME_DU_BOT'), ''));
 end $$;
 grant execute on function link_code_generer() to authenticated;
+
+-- 2e) RPC appelee par l'app (polling) : lit les messages du bot (getUpdates SYNCHRONE via http)
+--     et, si un message contient le code de l'agent, enregistre son chat_id. Renvoie true si lie.
+create or replace function telegram_relier() returns boolean language plpgsql security definer set search_path = public, extensions as $$
+declare tok text; aid uuid; code text; existing text; body text; resp jsonb; u jsonb; vtxt text; chatid text;
+begin
+  select id, telegram_link_code, telegram_chat_id into aid, code, existing from agents where auth_uid = auth.uid();
+  if aid is null then return false; end if;
+  if existing is not null and existing <> '' then return true; end if;   -- deja lie
+  if code is null or code = '' then return false; end if;                -- pas de liaison en cours
+  select value into tok from app_config where key = 'telegram_token';
+  if tok is null or tok like 'COLLER%' then return false; end if;
+  begin
+    select content into body from extensions.http_get('https://api.telegram.org/bot' || tok || '/getUpdates?limit=40');
+  exception when others then return false; end;
+  if body is null then return false; end if;
+  begin resp := body::jsonb; exception when others then return false; end;
+  if not coalesce((resp->>'ok')::boolean, false) then return false; end if;
+  for u in select jsonb_array_elements(resp->'result') loop
+    vtxt := trim(coalesce(u->'message'->>'text', ''));
+    if vtxt like '/start %' then vtxt := trim(substring(vtxt from 8)); end if;  -- enleve "/start "
+    chatid := u->'message'->'chat'->>'id';
+    if chatid is not null and upper(vtxt) = upper(code) then
+      update agents set telegram_chat_id = chatid, telegram_link_code = null where id = aid;
+      return true;
+    end if;
+  end loop;
+  return false;
+end $$;
+grant execute on function telegram_relier() to authenticated;
 
 -- 3) Heures de travail (selon le fuseau du pays). Pas d'horaires = toujours actif.
 create or replace function in_working_hours(p_fuseau text, p_horaires jsonb)
@@ -226,12 +257,12 @@ begin
   on conflict (key) do update set value = excluded.value;
 end $$;
 
--- 7) Scan chaque minute : retards (proprietaire) + commandes a appeler (closeuses) + liaisons Telegram.
+-- 7) Scan chaque minute : retards (proprietaire) + commandes a appeler (closeuses).
+--    (La liaison Telegram se fait via telegram_relier() appelee par l'app, pas ici.)
 create or replace function notify_scan() returns void language plpgsql as $$
 begin
   perform notify_late_orders();
   perform notify_closeuses();
-  perform telegram_sync_links();
 end; $$;
 
 select cron.unschedule('close-pro-sla') where exists (select 1 from cron.job where jobname = 'close-pro-sla');

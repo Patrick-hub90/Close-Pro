@@ -65,10 +65,7 @@ export default function CloseuseApp({
   const [loading, setLoading] = useState<boolean>(!!live)
   const [filtre, setFiltre] = useState<FiltreId>('a_appeler')
   const [tab, setTab] = useState<Tab>('appels')
-  // Revue du matin déjà passée aujourd'hui ? Mémorisé par jour pour ne pas resurgir à chaque rechargement.
-  const [sasDone, setSasDone] = useState(() => {
-    try { return localStorage.getItem('closepro_sas_jour') === new Date().toLocaleDateString('en-CA') } catch { return false }
-  })
+  const [sasDone, setSasDone] = useState(false)
   const [call, setCall] = useState<{ queue: Order[]; index: number } | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [blockLate, setBlockLate] = useState(false)
@@ -423,10 +420,14 @@ export default function CloseuseApp({
     return <CallMode queue={call.queue} index={call.index} onResult={handleResult} onClose={() => setCall(null)} />
   }
 
-  // Le SAS ne s'affiche que sur l'onglet « À appeler » (jamais en parcourant archives/livraisons/etc.).
-  const showSas = tab === 'appels' && filtre === 'a_appeler' && !sasDone && sasOrders.length > 0
+  // La revue du matin n'apparaît QUE le matin (de 6h à midi) — jamais l'après-midi ni la nuit —
+  // et seulement sur l'onglet « À appeler ». Passé midi, les livraisons restantes se gèrent
+  // depuis l'onglet « Livraisons ».
+  const heureLocale = new Date(now).getHours()
+  const fenetreMatin = heureLocale >= 6 && heureLocale < 12
+  const showSas = tab === 'appels' && filtre === 'a_appeler' && fenetreMatin && !sasDone && sasOrders.length > 0
   if (showSas) {
-    return <div className="app"><MorningSas orders={sasOrders} onDone={() => { setSasDone(true); try { localStorage.setItem('closepro_sas_jour', new Date().toLocaleDateString('en-CA')) } catch { /* quota */ } }} onResolve={resolveSas} onSetCost={setSasCost} /></div>
+    return <div className="app"><MorningSas orders={sasOrders} onDone={() => setSasDone(true)} onResolve={resolveSas} onSetCost={setSasCost} /></div>
   }
 
   const emptySub = filtre === 'a_appeler' ? 'Aucune commande à appeler pour le moment.'

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { createCloseuse } from '../lib/account'
 
-interface Cl { id: string; nom: string; pays: string | null; actif: boolean; horaires: { debut?: string; fin?: string; sheet_url?: string } | null }
+interface Cl { id: string; nom: string; pays: string | null; actif: boolean; telegram_chat_id: string | null; horaires: { debut?: string; fin?: string; sheet_url?: string } | null }
 interface C { code: string; nom: string }
 type Msg = { ok?: boolean; txt: string } | null
 
@@ -15,28 +15,28 @@ export default function Closeuses({ defaultPays }: { defaultPays?: string }) {
   // édition
   const [editId, setEditId] = useState<string | null>(null)
   const [eNom, setENom] = useState(''); const [ePays, setEPays] = useState('')
-  const [eDebut, setEDebut] = useState(''); const [eFin, setEFin] = useState(''); const [eSheet, setESheet] = useState(''); const [eActif, setEActif] = useState(true)
+  const [eDebut, setEDebut] = useState(''); const [eFin, setEFin] = useState(''); const [eSheet, setESheet] = useState(''); const [eActif, setEActif] = useState(true); const [eTel, setETel] = useState('')
 
   // création
   const [showCreate, setShowCreate] = useState(false)
   const [nom, setNom] = useState(''); const [email, setEmail] = useState(''); const [pw, setPw] = useState('')
-  const [pays, setPays] = useState(''); const [debut, setDebut] = useState('08:00'); const [fin, setFin] = useState('18:00'); const [sheet, setSheet] = useState('')
+  const [pays, setPays] = useState(''); const [debut, setDebut] = useState('08:00'); const [fin, setFin] = useState('18:00'); const [sheet, setSheet] = useState(''); const [tel, setTel] = useState('')
 
   function load() {
-    supabase?.from('agents').select('id, nom, pays, actif, horaires').eq('role', 'closer').then(({ data }) => setList((data as Cl[]) ?? []))
+    supabase?.from('agents').select('id, nom, pays, actif, telegram_chat_id, horaires').eq('role', 'closer').then(({ data }) => setList((data as Cl[]) ?? []))
     supabase?.from('countries').select('code, nom').then(({ data }) => setCountries((data as C[]) ?? []))
   }
   useEffect(() => { load() }, [])
 
   function startEdit(c: Cl) {
     setMsg(null); setEditId(c.id); setENom(c.nom); setEPays(c.pays || '')
-    setEDebut(c.horaires?.debut || ''); setEFin(c.horaires?.fin || ''); setESheet(c.horaires?.sheet_url || ''); setEActif(c.actif)
+    setEDebut(c.horaires?.debut || ''); setEFin(c.horaires?.fin || ''); setESheet(c.horaires?.sheet_url || ''); setEActif(c.actif); setETel(c.telegram_chat_id || '')
   }
   async function saveEdit() {
     if (!supabase || !editId) return
     setBusy(true); setMsg(null)
     const horaires = { debut: eDebut || null, fin: eFin || null, sheet_url: eSheet || null }
-    const { error } = await supabase.from('agents').update({ nom: eNom.trim(), pays: ePays, horaires, actif: eActif }).eq('id', editId)
+    const { error } = await supabase.from('agents').update({ nom: eNom.trim(), pays: ePays, horaires, actif: eActif, telegram_chat_id: eTel.trim() || null }).eq('id', editId)
     setBusy(false)
     if (error) { setMsg({ txt: error.message }); return }
     setEditId(null); load()
@@ -53,14 +53,14 @@ export default function Closeuses({ defaultPays }: { defaultPays?: string }) {
     const code = pays || defaultPays || countries[0]?.code || ''
     if (!code) { setMsg({ txt: 'Choisis un pays.' }); return }
     setBusy(true); setMsg(null)
-    const { error } = await createCloseuse({ nom, email, password: pw, pays: code, debut, fin, sheetUrl: sheet })
+    const { error } = await createCloseuse({ nom, email, password: pw, pays: code, debut, fin, sheetUrl: sheet, telegram: tel })
     setBusy(false)
     if (error) {
       setMsg({ txt: /signups are disabled/i.test(error) ? 'Active les inscriptions email dans Supabase (Auth → Providers → Email).' : error })
       return
     }
     setMsg({ ok: true, txt: `Closeuse « ${nom} » créée.` })
-    setNom(''); setEmail(''); setPw(''); setSheet(''); setShowCreate(false); load()
+    setNom(''); setEmail(''); setPw(''); setSheet(''); setTel(''); setShowCreate(false); load()
   }
 
   return (
@@ -81,6 +81,7 @@ export default function Closeuses({ defaultPays }: { defaultPays?: string }) {
               <label>Fin<input type="time" value={eFin} onChange={(e) => setEFin(e.target.value)} /></label>
             </div>
             <input type="url" value={eSheet} onChange={(e) => setESheet(e.target.value)} placeholder="Lien Google Sheet" />
+            <input value={eTel} onChange={(e) => setETel(e.target.value)} placeholder="Telegram chat ID (pour ses notifications)" inputMode="numeric" />
             <label className="cl-toggle"><input type="checkbox" checked={eActif} onChange={(e) => setEActif(e.target.checked)} /> Active</label>
             <div className="cl-actions">
               <button className="ghostbtn" onClick={() => setEditId(null)}>Annuler</button>
@@ -115,6 +116,7 @@ export default function Closeuses({ defaultPays }: { defaultPays?: string }) {
             <label>Fin<input type="time" value={fin} onChange={(e) => setFin(e.target.value)} /></label>
           </div>
           <input type="url" placeholder="Lien Google Sheet (source)" value={sheet} onChange={(e) => setSheet(e.target.value)} />
+          <input placeholder="Telegram chat ID (optionnel)" value={tel} onChange={(e) => setTel(e.target.value)} inputMode="numeric" />
           <div className="cl-actions">
             <button type="button" className="ghostbtn" onClick={() => setShowCreate(false)}>Annuler</button>
             <button type="submit" disabled={busy}>{busy ? 'Création…' : 'Créer'}</button>

@@ -15,7 +15,7 @@ export async function changePassword(newPassword: string): Promise<{ error?: str
  */
 export async function createCloseuse(p: {
   nom: string; email: string; password: string; pays: string
-  debut?: string; fin?: string; sheetUrl?: string
+  debut?: string; fin?: string; sheetUrl?: string; telegram?: string
 }): Promise<{ error?: string }> {
   const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
   const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -32,7 +32,7 @@ export async function createCloseuse(p: {
     : null
   const { error: e2 } = await supabase
     .from('agents')
-    .insert({ auth_uid: uid, role: 'closer', nom: p.nom.trim(), pays: p.pays, horaires })
+    .insert({ auth_uid: uid, role: 'closer', nom: p.nom.trim(), pays: p.pays, horaires, telegram_chat_id: p.telegram?.trim() || null })
   if (e2) return { error: 'Compte créé mais fiche agent en échec : ' + e2.message }
   return {}
 }

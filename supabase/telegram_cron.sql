@@ -21,6 +21,9 @@ on conflict (key) do nothing;
 -- 2b) Drapeau de notification sur les tentatives (pour notifier "traite" une seule fois)
 alter table call_attempts add column if not exists notifie boolean default false;
 
+-- 2c) Chat Telegram de chaque closeuse (pour ses notifications individuelles).
+alter table agents add column if not exists telegram_chat_id text;
+
 -- 3) Heures de travail (selon le fuseau du pays). Pas d'horaires = toujours actif.
 create or replace function in_working_hours(p_fuseau text, p_horaires jsonb)
 returns boolean language plpgsql stable as $$
@@ -115,10 +118,57 @@ end; $$;
 --    notifie des changements de statut. On retire l'ancienne fonction si elle existe.)
 drop function if exists notify_traitements();
 
--- 7) Scan des retards chaque minute.
+-- 6b) Notifie chaque CLOSEUSE (sur son propre chat Telegram) des commandes a appeler :
+--     nouvelles commandes + rappels dont l'heure vient de passer. Une notif par commande/echeance.
+create or replace function notify_closeuses() returns void language plpgsql as $$
+declare tok text; r record; msg text;
+begin
+  select value into tok from app_config where key = 'telegram_token';
+  if tok is null or tok like 'COLLER%' then return; end if;
+
+  for r in
+    select o.id, o.numero, o.nom_complet, o.region, o.statut, o.rappel_at,
+           a.telegram_chat_id as chat, a.horaires as horaires,
+           coalesce(c.fuseau, 'Africa/Abidjan') as fuseau,
+           case when o.statut = 'a_appeler' then 'new'
+                else 'rap:' || coalesce(to_char(o.rappel_at, 'YYYYMMDDHH24MI'), '') end as marqueur
+    from orders o
+    join agents a on a.id = o.closeuse_id
+    left join countries c on c.code = o.pays
+    where a.telegram_chat_id is not null and a.telegram_chat_id <> ''
+      and o.is_backfill = false
+      and (
+            (o.statut = 'a_appeler' and o.rappel_at is null)
+         or (o.statut in ('a_rappeler','injoignable','reporte') and o.rappel_at is not null and o.rappel_at < now())
+          )
+      and notif_autorisee(coalesce(c.fuseau, 'Africa/Abidjan'), a.horaires)
+      and not exists (
+        select 1 from events e where e.order_id = o.id and e.type = 'cz_appel'
+          and e.payload->>'m' = (case when o.statut = 'a_appeler' then 'new'
+                                       else 'rap:' || coalesce(to_char(o.rappel_at, 'YYYYMMDDHH24MI'), '') end)
+      )
+    limit 80
+  loop
+    msg := E'\xF0\x9F\x93\x9E A appeler : ' || r.numero || E'\n'
+        || coalesce(r.nom_complet, '') || ' (' || coalesce(r.region, '-') || ')'
+        || case when r.statut <> 'a_appeler'
+                then E'\n' || 'rappel prevu ' || to_char(r.rappel_at at time zone r.fuseau, 'HH24:MI')
+                else '' end;
+    perform net.http_post(
+      url := 'https://api.telegram.org/bot' || tok || '/sendMessage',
+      headers := '{"Content-Type":"application/json"}'::jsonb,
+      body := jsonb_build_object('chat_id', r.chat, 'text', msg)
+    );
+    insert into events (order_id, type, severite, canal_notif, destinataire, notifie, envoye_at, payload)
+    values (r.id, 'cz_appel', 'info', 'telegram', 'closeuse', true, now(), jsonb_build_object('m', r.marqueur));
+  end loop;
+end; $$;
+
+-- 7) Scan chaque minute : retards (proprietaire) + commandes a appeler (closeuses).
 create or replace function notify_scan() returns void language plpgsql as $$
 begin
   perform notify_late_orders();
+  perform notify_closeuses();
 end; $$;
 
 select cron.unschedule('close-pro-sla') where exists (select 1 from cron.job where jobname = 'close-pro-sla');

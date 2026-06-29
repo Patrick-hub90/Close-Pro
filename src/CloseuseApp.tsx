@@ -398,8 +398,10 @@ export default function CloseuseApp({
         // Sécurité Finance : une vente sans date de confirmation serait invisible.
         if (ord && !ord.confirmeAt) patch.confirme_at = new Date(nowMs).toISOString()
       }
-      // Reporté : date de re-livraison ; toute autre issue efface le report.
-      patch.livraison_prevue = issue === 'reporte' && dateMs ? new Date(dateMs).toISOString() : null
+      // Reporté seulement : mémorise la date de re-livraison (colonne livraison_prevue).
+      // (On n'écrit cette colonne que dans ce cas : Livré/Annulé restent fonctionnels même
+      //  si la migration livraison_prevue n'a pas encore été appliquée.)
+      if (issue === 'reporte' && dateMs) patch.livraison_prevue = new Date(dateMs).toISOString()
       supabase.from('orders').update(patch).eq('id', orderId).then(({ error }) => {
         if (error) console.error('[Close-Pro] clôture livraison échouée:', error.message)
       })

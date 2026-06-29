@@ -70,6 +70,11 @@ export default function CloseuseApp({
   const [selectMode, setSelectMode] = useState(false)
   const [blockLate, setBlockLate] = useState(false)
   const [orderBlock, setOrderBlock] = useState<Order | null>(null)
+  // Liaison Telegram (closeuse) : barre d'invitation + fenêtre de liaison.
+  const [tgLinked, setTgLinked] = useState(true) // on suppose lié jusqu'à vérification (évite un flash)
+  const [tgModal, setTgModal] = useState(false)
+  const [tgCode, setTgCode] = useState<string | null>(null)
+  const [tgDismissed, setTgDismissed] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [archived, setArchived] = useState<Order[]>([])
   const [selectedPays, setSelectedPays] = useState('')
@@ -131,6 +136,27 @@ export default function CloseuseApp({
     q.then(({ count }) => { if (active) setLivreJour(count ?? 0) })
     return () => { active = false }
   }, [live, isOwner, selectedPays, orders])
+
+  // Statut de liaison Telegram de l'agent connecté (rafraîchi pour détecter la liaison).
+  useEffect(() => {
+    if (!live || !supabase || !agent?.id) return
+    let active = true
+    const check = () => supabase!.from('agents').select('telegram_chat_id').eq('id', agent.id!).maybeSingle()
+      .then(({ data }) => {
+        if (!active) return
+        const linked = !!(data as { telegram_chat_id?: string } | null)?.telegram_chat_id
+        setTgLinked(linked)
+        if (linked) { setTgModal(false); setTgCode(null) }
+      })
+    check()
+    const id = setInterval(check, 8000)
+    return () => { active = false; clearInterval(id) }
+  }, [live, agent])
+  async function tgGenerate() {
+    if (!supabase) return
+    const { data } = await supabase.rpc('link_code_generer')
+    if (data) setTgCode(data as string)
+  }
 
   // Moteur de contrainte : alerte (vibration + bip) quand une commande passe en retard.
   const notifiedRef = useRef<Set<string>>(new Set())
@@ -436,6 +462,14 @@ export default function CloseuseApp({
             ))}
           </div>
 
+          {live && !isOwner && !tgLinked && !tgDismissed ? (
+            <button className="tgbar" onClick={() => setTgModal(true)}>
+              <i className="ti ti-brand-telegram" aria-hidden="true" />
+              Lie ton Telegram pour recevoir tes notifications
+              <i className="ti ti-chevron-right" aria-hidden="true" />
+            </button>
+          ) : null}
+
           {!workingNow && agent?.horaires?.debut ? (
             <div className="hoursbar"><i className="ti ti-player-pause" aria-hidden="true" /> Hors de tes horaires ({agent.horaires.debut}–{agent.horaires.fin}) — décomptes en pause</div>
           ) : null}
@@ -560,6 +594,30 @@ export default function CloseuseApp({
             <h3>Respecte l'ordre d'appel</h3>
             <p>Appelle de la plus ancienne à la plus récente. Commence par <b>{orderBlock.numero}</b>.</p>
             <button onClick={() => openForce(orderBlock)}>Ouvrir {orderBlock.numero}</button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Fenêtre : lier Telegram */}
+      {tgModal ? (
+        <div className="err-overlay" onClick={() => setTgModal(false)}>
+          <div className="errbox" onClick={(e) => e.stopPropagation()}>
+            <i className="ti ti-brand-telegram" aria-hidden="true" />
+            <h3>Recevoir les notifications</h3>
+            {tgCode ? (
+              <>
+                <p>Ouvre notre bot Telegram, démarre-le et envoie-lui ce code :</p>
+                <div className="tg-code">{tgCode}</div>
+                <p className="tg-wait">La liaison se fait toute seule en ~1 min — garde l'app ouverte.</p>
+                <button onClick={() => setTgModal(false)}>Fermer</button>
+              </>
+            ) : (
+              <>
+                <p>Lie ton Telegram pour être prévenu(e) à chaque commande à appeler.</p>
+                <button onClick={tgGenerate}>Lier maintenant</button>
+                <button className="ghost" onClick={() => { setTgDismissed(true); setTgModal(false) }}>Plus tard</button>
+              </>
+            )}
           </div>
         </div>
       ) : null}

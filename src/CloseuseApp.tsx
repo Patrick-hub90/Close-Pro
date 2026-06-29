@@ -296,7 +296,7 @@ export default function CloseuseApp({
     if (!ids.length) return
     const nowMs = Date.now()
     setOrders((prev) => prev.map((x) => (ids.includes(x.id)
-      ? { ...x, statut, confirmeAt: statut === 'confirme' ? (x.confirmeAt ?? nowMs) : x.confirmeAt, livreAt: statut === 'livre' ? nowMs : x.livreAt } : x)))
+      ? { ...x, statut, confirmeAt: statut === 'confirme' ? nowMs : x.confirmeAt, livreAt: statut === 'livre' ? nowMs : x.livreAt } : x)))
     if (live && supabase) {
       const patch: Record<string, any> = { statut }
       if (statut === 'confirme') patch.confirme_at = new Date(nowMs).toISOString()
@@ -318,8 +318,11 @@ export default function CloseuseApp({
     // résultat (confirmé, whatsapp, livré…) n'a pas d'horaire : on efface l'horodatage.
     const keepRappel = r.statut === 'a_rappeler' || r.statut === 'injoignable' || r.statut === 'reporte'
     const nowMs = Date.now()
-    // Confirmé OU livré → pose une date de confirmation (la vente compte pour ce jour).
-    const confirmeAt = (r.statut === 'confirme' || r.statut === 'livre') ? (o.confirmeAt ?? nowMs) : o.confirmeAt
+    // « Confirmé » (re)pose TOUJOURS la date de confirmation à aujourd'hui : la livraison se planifie
+    // au lendemain de la dernière confirmation, et la revue du matin (SAS) ne doit pas remonter une
+    // commande re-confirmée le jour même via une vieille date « collante ».
+    // « Livré » conserve la date de confirmation existante (jour d'attribution de la vente).
+    const confirmeAt = r.statut === 'confirme' ? nowMs : (r.statut === 'livre' ? (o.confirmeAt ?? nowMs) : o.confirmeAt)
     const livreAt = r.statut === 'livre' ? (o.livreAt ?? nowMs) : o.livreAt
 
     // Applique la mise à jour ; gère le va-et-vient entre liste active et archive
@@ -352,7 +355,8 @@ export default function CloseuseApp({
       if (r.coutLivraison != null) db.cout_livraison = r.coutLivraison
       if (r.adresse != null) db.adresse = r.adresse
       if (r.commentaire) db.dernier_commentaire = r.commentaire
-      if ((r.statut === 'confirme' || r.statut === 'livre') && !o.confirmeAt) db.confirme_at = new Date(confirmeAt!).toISOString()
+      if (r.statut === 'confirme') db.confirme_at = new Date(confirmeAt!).toISOString()
+      else if (r.statut === 'livre' && !o.confirmeAt) db.confirme_at = new Date(confirmeAt!).toISOString()
       if (r.statut === 'livre') db.livre_at = new Date(livreAt!).toISOString()
       if (keepRappel && r.rappelAt) {
         const iso = new Date(r.rappelAt).toISOString()

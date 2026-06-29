@@ -104,8 +104,9 @@ export default function CallMode({
   // Commande confirmée / en livraison → écran de clôture (Livré / Annulé / Reporté).
   // (Reporté n'est plus ici : il devient un rappel et s'ouvre en mode appel.)
   const isLivraison = o.statut === 'confirme' || o.statut === 'livraison'
-  // Montant net de la commande = prix × quantité − frais de livraison (les frais sont déduits).
-  const total = Math.max(0, Math.max(0, Math.round(prix)) * Math.max(1, qte) - Math.max(0, Math.round(cout)))
+  // Total = ce que le CLIENT paye (prix × quantité). Les frais ne changent pas ce montant.
+  const total = Math.max(0, Math.round(prix)) * Math.max(1, qte)
+  const net = Math.max(0, total - Math.max(0, Math.round(cout))) // ce que le marchand reçoit
   // Détails : toutes les colonnes du Sheet, y compris les valeurs sans nom de colonne.
   const extraEntries = o.extra
     ? Object.entries(o.extra).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
@@ -280,7 +281,8 @@ export default function CallMode({
             {o.rappelAt && <div className="fiche-row"><span className="fk">Programmé</span><span className="fv">{fmtDt(o.rappelAt)}</span></div>}
             <div className="fiche-row"><span className="fk">Prix unitaire</span><span className="fv">{fcfa(o.prixUnitaire)}</span></div>
             {cout > 0 && <div className="fiche-row"><span className="fk">Livraison</span><span className="fv">{fcfa(cout)}</span></div>}
-            <div className="fiche-row"><span className="fk">Total</span><span className="fv fv-b">{fcfa(total)}</span></div>
+            <div className="fiche-row"><span className="fk">Payé par le client</span><span className="fv fv-b">{fcfa(total)}</span></div>
+            {cout > 0 && <div className="fiche-row"><span className="fk">Net (vous recevez)</span><span className="fv fv-b">{fcfa(net)}</span></div>}
             {extraEntries.map(([k, v]) => {
               const sansNom = !k.trim() || /^(col|column|colonne|field|__\w+|\d+)$/i.test(k.trim())
               return (

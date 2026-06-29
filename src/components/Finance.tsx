@@ -51,9 +51,9 @@ function Finance({ pays }: { pays?: string }) {
       if (!active) return
       if (error) { setErr(error.message); setLoading(false); return }
       setLignes((data ?? []).map((d: any) => {
-        // total est déjà NET (prix − frais). On reconstruit l'encaissé brut = net + frais.
-        const cout = d.cout_livraison ?? 0, net = d.total ?? 0
-        return { id: d.id, numero: d.numero, adresse: d.adresse || d.region || '—', cout, net, recu: net + cout }
+        // total = prix payé par le client (brut). Net (ce que le marchand reçoit) = total − frais.
+        const recu = d.total ?? 0, cout = d.cout_livraison ?? 0
+        return { id: d.id, numero: d.numero, adresse: d.adresse || d.region || '—', cout, recu, net: recu - cout }
       }))
       setLoading(false)
     })
@@ -120,7 +120,7 @@ function Finance({ pays }: { pays?: string }) {
         </div>
       )}
 
-      <div className="fin-note"><i className="ti ti-info-circle" aria-hidden="true" /> Une vente compte pour son jour de confirmation. Le « Net » a déjà les frais de livraison déduits ; « Reçu » = encaissé auprès du client (net + frais).</div>
+      <div className="fin-note"><i className="ti ti-info-circle" aria-hidden="true" /> Une vente compte pour son jour de confirmation. « Reçu » = prix payé par le client ; « Net » = ce que tu reçois (reçu − frais de livraison).</div>
     </div>
   )
 }

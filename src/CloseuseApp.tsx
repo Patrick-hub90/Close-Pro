@@ -149,8 +149,10 @@ export default function CloseuseApp({
   // Revue de livraison du matin : commandes confirmées / en livraison AVANT aujourd'hui.
   // Une commande confirmée le jour même n'y apparaît que le lendemain (la livraison suit).
   const startOfToday = useMemo(() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() }, [now])
+  // N'apparaissent que les commandes confirmées AVANT aujourd'hui (jamais le jour même).
+  // Sans date de confirmation connue, on n'affiche pas (évite le SAS prématuré).
   const sasOrders = live
-    ? scoped.filter((o) => (o.statut === 'confirme' || o.statut === 'livraison') && (!o.confirmeAt || o.confirmeAt < startOfToday))
+    ? scoped.filter((o) => (o.statut === 'confirme' || o.statut === 'livraison') && !!o.confirmeAt && o.confirmeAt < startOfToday)
     : LIVRAISONS
 
   const counts = useMemo(() => {
@@ -272,9 +274,9 @@ export default function CloseuseApp({
   function handleResult(o: Order, r: CallResult) {
     const prix = r.prixNegocie ?? o.prixNegocie ?? o.prixUnitaire
     const qte = r.quantite ?? o.quantite
-    const cout = r.coutLivraison ?? o.coutLivraison ?? 0
-    // Montant net = prix × quantité − frais de livraison (déduits).
-    const total = Math.max(0, Math.round(prix) * qte - Math.round(cout))
+    // Total = ce que le client paye (prix × quantité). Les frais ne changent pas ce montant
+    // (ils sont déduits seulement pour le net, calculé en Finance).
+    const total = Math.round(prix) * qte
     const newTent = r.statut === 'injoignable' ? o.tentatives + 1 : o.tentatives
     // Un rappel n'est pertinent que pour "à rappeler" / "injoignable" / "reporté". Tout autre
     // résultat (confirmé, whatsapp, livré…) n'a pas d'horaire : on efface l'horodatage.
@@ -358,11 +360,8 @@ export default function CloseuseApp({
 
   // Saisie du coût de livraison manquant depuis le SAS (obligatoire avant « livré »).
   function setSasCost(orderId: string, cout: number) {
-    setOrders((prev) => prev.map((x) => {
-      if (x.id !== orderId) return x
-      const base = (x.prixNegocie ?? x.prixUnitaire) * x.quantite
-      return { ...x, coutLivraison: cout, total: Math.max(0, base - cout) }
-    }))
+    // On enregistre seulement le coût de livraison ; le total (prix payé client) ne change pas.
+    setOrders((prev) => prev.map((x) => (x.id === orderId ? { ...x, coutLivraison: cout } : x)))
     if (live && supabase) void supabase.from('orders').update({ cout_livraison: cout }).eq('id', orderId)
   }
 

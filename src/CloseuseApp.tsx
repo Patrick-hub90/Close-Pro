@@ -20,6 +20,26 @@ const FILTRES: { id: FiltreId; label: string }[] = [
   { id: 'archivees', label: 'Archivées' },
 ]
 
+// Le « jour » et l'heure d'ouverture de la revue du matin sont calés sur le fuseau du Cameroun
+// (WAT = UTC+1, sans heure d'été) — pas sur l'horloge locale du téléphone, comme le moteur SLA serveur.
+const WAT_OFFSET_MS = 60 * 60 * 1000
+function heureWat(nowMs: number) { return new Date(nowMs + WAT_OFFSET_MS).getUTCHours() }
+function debutJourWat(nowMs: number) { const d = new Date(nowMs + WAT_OFFSET_MS); d.setUTCHours(0, 0, 0, 0); return d.getTime() - WAT_OFFSET_MS }
+
+// Reports de livraison mémorisés côté client : ceinture de sécurité qui tient même si la colonne DB
+// livraison_prevue n'est pas migrée, et qui survit aux rechargements et au refetch périodique.
+const REPORTS_KEY = 'closepro_reports_livraison'
+function chargerReports(): Record<string, number> {
+  try {
+    const r = JSON.parse(localStorage.getItem(REPORTS_KEY) || '{}')
+    if (!r || typeof r !== 'object') return {}
+    const t = Date.now(); const out: Record<string, number> = {}
+    for (const k in r) if (typeof r[k] === 'number' && r[k] > t) out[k] = r[k] // purge : ne garde que les reports encore à venir
+    return out
+  } catch { return {} }
+}
+function ecrireReports(r: Record<string, number>) { try { localStorage.setItem(REPORTS_KEY, JSON.stringify(r)) } catch { /* quota */ } }
+
 let _actx: AudioContext | null = null
 function beep() {
   try {
@@ -65,7 +85,7 @@ export default function CloseuseApp({
   const [loading, setLoading] = useState<boolean>(!!live)
   const [filtre, setFiltre] = useState<FiltreId>('a_appeler')
   const [tab, setTab] = useState<Tab>('appels')
-  const [sasDone, setSasDone] = useState(false)
+  const [reports, setReports] = useState<Record<string, number>>(chargerReports)
   const [call, setCall] = useState<{ queue: Order[]; index: number } | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [blockLate, setBlockLate] = useState(false)
@@ -183,15 +203,22 @@ export default function CloseuseApp({
   }, [now, orders, live, workingNow, isOwner])
 
   // Revue de livraison du matin : commandes confirmées / en livraison AVANT aujourd'hui.
-  // Une commande confirmée le jour même n'y apparaît que le lendemain (la livraison suit).
-  const startOfToday = useMemo(() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() }, [now])
-  // N'apparaissent que les commandes confirmées AVANT aujourd'hui (jamais le jour même).
-  // Sans date de confirmation connue, on n'affiche pas (évite le SAS prématuré).
+  // Le « jour » de référence est celui du Cameroun (WAT), pas l'horloge locale du téléphone.
+  const startOfToday = useMemo(() => debutJourWat(now), [now])
+  // N'apparaissent que les commandes confirmées AVANT aujourd'hui (jamais le jour même), pas encore
+  // clôturées, et dont la re-livraison éventuelle (colonne DB OU report mémorisé localement) est échue.
   const sasOrders = live
     ? scoped.filter((o) => (o.statut === 'confirme' || o.statut === 'livraison') && !!o.confirmeAt && o.confirmeAt < startOfToday
-        // Une livraison reportée ne réapparaît qu'à partir de sa date de re-livraison.
-        && (!o.livraisonPrevue || o.livraisonPrevue <= now))
+        && (!o.livraisonPrevue || o.livraisonPrevue <= now)
+        && !(reports[o.id] && reports[o.id] > now))
     : LIVRAISONS
+
+  // Verrou de la revue du matin : dès 6h (heure Cameroun) et tant qu'il reste des livraisons à
+  // clôturer, l'onglet Appels est BLOQUÉ — quel que soit le filtre — et aucun appel ne peut être lancé.
+  const sasLock = live && tab === 'appels' && heureWat(now) >= 6 && sasOrders.length > 0
+  // Le verrou est prioritaire : s'il s'arme pendant un appel déjà ouvert (passage de 6h, ou
+  // livraisons de la veille chargées par le refetch), on ferme l'appel pour imposer la revue.
+  useEffect(() => { if (sasLock && call) setCall(null) }, [sasLock, call])
 
   const counts = useMemo(() => {
     const c: Record<FiltreId, number> = { a_appeler: 0, rappels: 0, retard: 0, livraisons: 0, discussion: 0, toutes: 0, archivees: 0 }
@@ -270,11 +297,13 @@ export default function CloseuseApp({
   // Ordre d'appel imposé : de la plus ancienne (haut de liste) à la plus récente.
   const APPELABLES: Statut[] = ['a_appeler', 'a_rappeler', 'injoignable', 'reporte']
   function openForce(o: Order) {
+    if (sasLock) return // revue du matin obligatoire : aucun appel tant qu'elle n'est pas vidée
     setOrderBlock(null)
     const i = displayList.findIndex((x) => x.id === o.id)
     setCall({ queue: displayList, index: Math.max(0, i) })
   }
   function openAt(o: Order) {
+    if (sasLock) return // revue du matin obligatoire : aucun appel tant qu'elle n'est pas vidée
     if (bloqueNouvelle(o)) { setBlockLate(true); return }
     // Ordre imposé UNIQUEMENT sur l'onglet « À appeler » ; libre sur les autres filtres.
     if (viewFiltre === 'a_appeler' && APPELABLES.includes(o.statut)) {
@@ -286,6 +315,7 @@ export default function CloseuseApp({
   }
   // Bouton unifié : lance toujours la file d'appel (retards en tête), quel que soit le filtre.
   function startQueue() {
+    if (sasLock) return // revue du matin obligatoire : aucun appel tant qu'elle n'est pas vidée
     if (fileAppel.length) setCall({ queue: fileAppel, index: 0 })
   }
   function toggleSelect(id: string) {
@@ -293,17 +323,27 @@ export default function CloseuseApp({
   }
   function exitSelect() { setSelectMode(false); setSelected(new Set()) }
 
+  // Une commande qui repasse par un flux de statut (re-confirmée, rappelée, livrée…) quitte tout
+  // report de livraison : on efface le report local ET la date DB, sinon elle resterait masquée du SAS.
+  function oublierReport(orderId: string, avaitDatePrevueDb: boolean) {
+    setReports((prev) => { if (!prev[orderId]) return prev; const n = { ...prev }; delete n[orderId]; ecrireReports(n); return n })
+    if (avaitDatePrevueDb && live && supabase) void supabase.from('orders').update({ livraison_prevue: null }).eq('id', orderId)
+  }
+
   function bulkStatut(statut: Statut) {
     const ids = [...selected]
     if (!ids.length) return
     const nowMs = Date.now()
+    const avaitReport = orders.some((x) => ids.includes(x.id) && x.livraisonPrevue)
     setOrders((prev) => prev.map((x) => (ids.includes(x.id)
-      ? { ...x, statut, confirmeAt: statut === 'confirme' ? nowMs : x.confirmeAt, livreAt: statut === 'livre' ? nowMs : x.livreAt } : x)))
+      ? { ...x, statut, confirmeAt: statut === 'confirme' ? nowMs : x.confirmeAt, livreAt: statut === 'livre' ? nowMs : x.livreAt, livraisonPrevue: undefined } : x)))
+    setReports((prev) => { let chg = false; const n = { ...prev }; for (const id of ids) if (n[id]) { delete n[id]; chg = true }; if (chg) ecrireReports(n); return chg ? n : prev })
     if (live && supabase) {
       const patch: Record<string, any> = { statut }
       if (statut === 'confirme') patch.confirme_at = new Date(nowMs).toISOString()
       if (statut === 'livre') patch.livre_at = new Date(nowMs).toISOString()
       void supabase.from('orders').update(patch).in('id', ids)
+      if (avaitReport) void supabase.from('orders').update({ livraison_prevue: null }).in('id', ids) // best-effort, séparé
       void supabase.from('call_attempts').insert(ids.map((id) => ({ order_id: id, agent_id: agent?.id ?? null, canal: 'masse', resultat: statut })))
     }
     exitSelect()
@@ -331,6 +371,9 @@ export default function CloseuseApp({
     // (ex. une commande « livrée » qu'on repasse en « à rappeler » revient dans l'actif).
     const apply = (x: Order): Order => ({
       ...x, statut: r.statut, tentatives: newTent, total, confirmeAt, livreAt,
+      // Repasser par le flux d'appel annule tout report de livraison (sinon la commande
+      // re-confirmée resterait masquée du SAS jusqu'à l'ancienne date de re-livraison).
+      livraisonPrevue: undefined,
       prixNegocie: r.prixNegocie ?? x.prixNegocie, coutLivraison: r.coutLivraison ?? x.coutLivraison,
       produit: r.produit ?? x.produit, quantite: qte, adresse: r.adresse ?? x.adresse,
       commentaire: r.commentaire ?? x.commentaire,
@@ -350,6 +393,7 @@ export default function CloseuseApp({
       if (estTerminal) return exists ? prev.map((x) => (x.id === o.id ? apply(x) : x)) : [apply(o), ...prev]
       return exists ? prev.filter((x) => x.id !== o.id) : prev
     })
+    oublierReport(o.id, !!o.livraisonPrevue)
 
     if (live && supabase) {
       const db: Record<string, any> = { statut: r.statut, tentatives: newTent, total, produit_nom: r.produit ?? o.produit, quantite: qte }
@@ -383,14 +427,24 @@ export default function CloseuseApp({
     const statut: Statut = issue === 'livre' ? 'livre' : issue === 'annule' ? 'annule' : 'livraison'
     const nowMs = Date.now()
     const ord = orders.find((x) => x.id === orderId)
-    setOrders((prev) => prev.map((x) => (x.id === orderId
-      ? {
-          ...x, statut,
-          livreAt: statut === 'livre' ? nowMs : x.livreAt,
-          confirmeAt: statut === 'livre' ? (x.confirmeAt ?? nowMs) : x.confirmeAt,
-          // Reporté : mémorise la date de re-livraison ; sinon on l'efface.
-          livraisonPrevue: issue === 'reporte' ? dateMs : undefined,
-        } : x)))
+    const terminal = issue === 'livre' || issue === 'annule'
+    const appliquer = (x: Order): Order => ({
+      ...x, statut,
+      livreAt: statut === 'livre' ? (x.livreAt ?? nowMs) : x.livreAt,
+      confirmeAt: statut === 'livre' ? (x.confirmeAt ?? nowMs) : x.confirmeAt,
+      livraisonPrevue: issue === 'reporte' ? dateMs : undefined,
+    })
+    if (terminal) {
+      // Livré / Annulé : quitte la liste active et part en archive (comme le flux d'appel normal).
+      setOrders((prev) => prev.filter((x) => x.id !== orderId))
+      setArchived((prev) => prev.some((x) => x.id === orderId)
+        ? prev.map((x) => (x.id === orderId ? appliquer(x) : x))
+        : (ord ? [appliquer(ord), ...prev] : prev))
+    } else {
+      // Reporté : reste en livraison ; la date est aussi mémorisée côté client (tient sans migration DB).
+      setOrders((prev) => prev.map((x) => (x.id === orderId ? appliquer(x) : x)))
+      if (dateMs) setReports((prev) => { const next = { ...prev, [orderId]: dateMs }; ecrireReports(next); return next })
+    }
     if (live && supabase) {
       const patch: Record<string, any> = { statut }
       if (statut === 'livre') {
@@ -420,14 +474,12 @@ export default function CloseuseApp({
     return <CallMode queue={call.queue} index={call.index} onResult={handleResult} onClose={() => setCall(null)} />
   }
 
-  // La revue du matin n'apparaît QUE le matin (de 6h à midi) — jamais l'après-midi ni la nuit —
-  // et seulement sur l'onglet « À appeler ». Passé midi, les livraisons restantes se gèrent
-  // depuis l'onglet « Livraisons ».
-  const heureLocale = new Date(now).getHours()
-  const fenetreMatin = heureLocale >= 6 && heureLocale < 12
-  const showSas = tab === 'appels' && filtre === 'a_appeler' && fenetreMatin && !sasDone && sasOrders.length > 0
-  if (showSas) {
-    return <div className="app"><MorningSas orders={sasOrders} onDone={() => setSasDone(true)} onResolve={resolveSas} onSetCost={setSasCost} /></div>
+  // Revue du matin OBLIGATOIRE : dès 6h (heure Cameroun) et tant qu'il reste des livraisons de la
+  // veille à clôturer, elle BLOQUE l'onglet Appels — quel que soit le filtre, et aucun appel ne peut
+  // être lancé (gardes sasLock dans openAt/openForce/startQueue). Elle se ferme d'elle-même quand
+  // sasOrders est vide — pas de bouton pour l'esquiver, pas de borne de fin.
+  if (sasLock) {
+    return <div className="app"><MorningSas orders={sasOrders} onResolve={resolveSas} onSetCost={setSasCost} /></div>
   }
 
   const emptySub = filtre === 'a_appeler' ? 'Aucune commande à appeler pour le moment.'

@@ -20,6 +20,14 @@ on conflict (key) do nothing;
 --   update app_config set value='TON_TOKEN'   where key='telegram_token';
 --   update app_config set value='TON_CHAT_ID' where key='telegram_chat_id';
 
+-- 2a-bis) Config Email (Resend) : les memes alertes closeuses partent aussi par email.
+insert into app_config (key, value) values
+  ('resend_api_key', 'COLLER_VOTRE_CLE_RESEND'),
+  ('resend_from',    'Close-Pro <onboarding@resend.dev>')  -- a remplacer par un expediteur d'un domaine verifie dans Resend
+on conflict (key) do nothing;
+--   update app_config set value='re_xxxxxxxx'                          where key='resend_api_key';
+--   update app_config set value='Close-Pro <alertes@tondomaine.com>'   where key='resend_from';
+
 -- 2b) Drapeau de notification sur les tentatives (pour notifier "traite" une seule fois)
 alter table call_attempts add column if not exists notifie boolean default false;
 
@@ -175,33 +183,54 @@ drop function if exists notify_traitements();
 --       'rap10:<rappel_at>'-> ce rappel n'est toujours pas traite 10 min apres l'heure prevue
 --     Une commande genere donc jusqu'a 2 alertes : a l'apparition, puis une relance a +10 min.
 
--- Helper : envoie un message Telegram a la closeuse et journalise le marqueur (dedup).
-create or replace function cz_envoyer(p_tok text, p_chat text, p_order uuid, p_marqueur text, p_msg text)
-  returns void language plpgsql as $$
+-- Helper : alerte la closeuse sur les canaux configures (Telegram + email via Resend) puis
+-- journalise le marqueur (dedup unique, quel que soit le nombre de canaux).
+drop function if exists cz_envoyer(text, text, uuid, text, text);  -- signature elargie (ajout email)
+create or replace function cz_envoyer(
+  p_tok text, p_chat text, p_resend text, p_from text, p_email text,
+  p_order uuid, p_marqueur text, p_titre text, p_msg text
+) returns void language plpgsql as $$
 begin
-  perform net.http_post(
-    url := 'https://api.telegram.org/bot' || p_tok || '/sendMessage',
-    headers := '{"Content-Type":"application/json"}'::jsonb,
-    body := jsonb_build_object('chat_id', p_chat, 'text', p_msg)
-  );
+  -- Telegram (si la closeuse a lie son compte)
+  if p_tok is not null and p_tok not like 'COLLER%' and p_chat is not null and p_chat <> '' then
+    perform net.http_post(
+      url := 'https://api.telegram.org/bot' || p_tok || '/sendMessage',
+      headers := '{"Content-Type":"application/json"}'::jsonb,
+      body := jsonb_build_object('chat_id', p_chat, 'text', p_msg)
+    );
+  end if;
+  -- Email (si la cle Resend est configuree et l'email de la closeuse connu)
+  if p_resend is not null and p_resend not like 'COLLER%' and p_email is not null and p_email <> '' then
+    perform net.http_post(
+      url := 'https://api.resend.com/emails',
+      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || p_resend),
+      body := jsonb_build_object('from', p_from, 'to', jsonb_build_array(p_email), 'subject', p_titre, 'text', p_msg)
+    );
+  end if;
   insert into events (order_id, type, severite, canal_notif, destinataire, notifie, envoye_at, payload)
   values (p_order, 'cz_appel', 'info', 'telegram', 'closeuse', true, now(), jsonb_build_object('m', p_marqueur));
 end; $$;
 
-create or replace function notify_closeuses() returns void language plpgsql as $$
-declare tok text; r record; cli text; mk text;
+create or replace function notify_closeuses() returns void language plpgsql
+  security definer set search_path = public, auth, extensions as $$
+declare tok text; resend text; rfrom text; r record; cli text; mk text;
 begin
-  select value into tok from app_config where key = 'telegram_token';
-  if tok is null or tok like 'COLLER%' then return; end if;
+  select value into tok    from app_config where key = 'telegram_token';
+  select value into resend from app_config where key = 'resend_api_key';
+  select value into rfrom  from app_config where key = 'resend_from';
+  -- Rien a faire si aucun canal n'est configure (ni Telegram, ni email).
+  if (tok is null or tok like 'COLLER%') and (resend is null or resend like 'COLLER%') then return; end if;
 
   for r in
     select o.id, o.numero, o.nom_complet, o.region, o.statut, o.rappel_at, o.appel_deadline,
-           a.telegram_chat_id as chat, a.horaires as horaires,
+           a.telegram_chat_id as chat, a.horaires as horaires, u.email as email,
            coalesce(c.fuseau, 'Africa/Abidjan') as fuseau
     from orders o
     join agents a on a.id = o.closeuse_id
+    left join auth.users u on u.id = a.auth_uid
     left join countries c on c.code = o.pays
-    where a.telegram_chat_id is not null and a.telegram_chat_id <> ''
+    where ( (a.telegram_chat_id is not null and a.telegram_chat_id <> '')
+         or (u.email is not null and u.email <> '') )
       and o.is_backfill = false
       and o.statut in ('a_appeler','a_rappeler','injoignable','reporte')
       and notif_autorisee(coalesce(c.fuseau, 'Africa/Abidjan'), a.horaires)
@@ -212,14 +241,16 @@ begin
     if r.statut = 'a_appeler' and r.rappel_at is null then
       -- (1) Nouvelle commande : alerte des l'apparition.
       if not exists (select 1 from events e where e.order_id = r.id and e.type = 'cz_appel' and e.payload->>'m' = 'new') then
-        perform cz_envoyer(tok, r.chat, r.id, 'new',
+        perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, r.id, 'new',
+          'Nouvelle commande a appeler : ' || r.numero,
           E'\xF0\x9F\x93\x9E Nouvelle commande a appeler : ' || r.numero || E'\n' || cli);
       end if;
       -- (3) Nouvelle commande non appelee 10 min apres l'echeance : relance.
       if r.appel_deadline is not null and r.appel_deadline < now() then
         mk := 'new10:' || to_char(r.appel_deadline, 'YYYYMMDDHH24MI');
         if not exists (select 1 from events e where e.order_id = r.id and e.type = 'cz_appel' and e.payload->>'m' = mk) then
-          perform cz_envoyer(tok, r.chat, r.id, mk,
+          perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, r.id, mk,
+            'Commande pas encore appelee (+10 min) : ' || r.numero,
             E'\xE2\x8F\xB0 Commande pas encore appelee (+10 min) : ' || r.numero || E'\n' || cli);
         end if;
       end if;
@@ -228,14 +259,16 @@ begin
       -- (2a) Rappel dont l'heure vient de passer : la commande revient dans "a appeler".
       mk := 'rap:' || to_char(r.rappel_at, 'YYYYMMDDHH24MI');
       if not exists (select 1 from events e where e.order_id = r.id and e.type = 'cz_appel' and e.payload->>'m' = mk) then
-        perform cz_envoyer(tok, r.chat, r.id, mk,
+        perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, r.id, mk,
+          'A rappeler maintenant : ' || r.numero,
           E'\xF0\x9F\x94\x94 A rappeler maintenant : ' || r.numero || E'\n' || cli);
       end if;
       -- (2b) Rappel toujours pas traite 10 min apres l'heure prevue : relance.
       if r.rappel_at + interval '10 minutes' < now() then
         mk := 'rap10:' || to_char(r.rappel_at, 'YYYYMMDDHH24MI');
         if not exists (select 1 from events e where e.order_id = r.id and e.type = 'cz_appel' and e.payload->>'m' = mk) then
-          perform cz_envoyer(tok, r.chat, r.id, mk,
+          perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, r.id, mk,
+            'Rappel pas encore fait (+10 min) : ' || r.numero,
             E'\xE2\x8F\xB0 Rappel pas encore fait (+10 min) : ' || r.numero || E'\n' || cli);
         end if;
       end if;

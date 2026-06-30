@@ -215,7 +215,8 @@ export default function CloseuseApp({
 
   // Verrou de la revue du matin : dès 6h (heure Cameroun) et tant qu'il reste des livraisons à
   // clôturer, l'onglet Appels est BLOQUÉ — quel que soit le filtre — et aucun appel ne peut être lancé.
-  const sasLock = live && tab === 'appels' && heureWat(now) >= 6 && sasOrders.length > 0
+  // Réservé aux CLOSEUSES : le propriétaire (supervision) n'est jamais bloqué par cet écran.
+  const sasLock = live && !isOwner && tab === 'appels' && heureWat(now) >= 6 && sasOrders.length > 0
   // Le verrou est prioritaire : s'il s'arme pendant un appel déjà ouvert (passage de 6h, ou
   // livraisons de la veille chargées par le refetch), on ferme l'appel pour imposer la revue.
   useEffect(() => { if (sasLock && call) setCall(null) }, [sasLock, call])

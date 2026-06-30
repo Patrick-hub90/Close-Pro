@@ -6,8 +6,9 @@ import { fcfa, hms, telLink, waLink, isLate } from '../lib'
 function Timer({ o, now }: { o: Order; now: number }) {
   let cible: number | undefined
   let ic = 'ti-clock'
-  if (o.statut === 'a_appeler') { cible = o.deadline; ic = 'ti-clock' }
-  else if (o.statut === 'a_rappeler') { cible = o.rappelAt; ic = 'ti-bell' }
+  // Pas de compte à rebours affiché pour les nouvelles commandes (« à appeler ») : le délai des
+  // 10 min reste calculé en interne (retard + notifications) mais n'apporte rien à l'écran.
+  if (o.statut === 'a_rappeler') { cible = o.rappelAt; ic = 'ti-bell' }
   else if (o.statut === 'injoignable') { cible = o.rappelAt; ic = 'ti-phone-off' }
   else if (o.statut === 'reporte') { cible = o.rappelAt; ic = 'ti-calendar-event' }
   if (!cible) return null

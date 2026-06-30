@@ -105,8 +105,11 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
 
       {visibles.map((o) => {
         const r = resolved[o.id]
-        const cout = coutDe(o)
+        const cout = coutDe(o)            // coût effectif (saisie locale ou DB) — sert à débloquer « Livré »
         const manque = !cout
+        // L'affichage champ-de-saisie vs lecture seule se décide sur le coût CONNU À L'OUVERTURE,
+        // pas sur la saisie en cours : sinon le champ disparaîtrait dès le 1er chiffre tapé.
+        const aSaisir = !o.coutLivraison
         return (
           <div className={`dcard ${r ? 'done' : ''} ${manque ? 'nocost' : ''}`} key={o.id}>
             <div className="dch">
@@ -115,9 +118,13 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
             </div>
             <div className="sub">{o.produit} · {o.adresse}</div>
 
-            {manque ? (
+            {aSaisir ? (
               <label className="dcost">
-                <span><i className="ti ti-alert-triangle" aria-hidden="true" /> Coût de livraison manquant</span>
+                <span>
+                  {cout > 0
+                    ? <><i className="ti ti-truck" aria-hidden="true" /> Coût de livraison</>
+                    : <><i className="ti ti-alert-triangle" aria-hidden="true" /> Coût de livraison manquant</>}
+                </span>
                 <input type="number" inputMode="numeric" min={0} placeholder="FCFA"
                   value={costs[o.id] || ''} onChange={(e) => saisirCout(o, +e.target.value || 0)} />
               </label>

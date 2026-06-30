@@ -23,22 +23,29 @@ export default function App() {
   useEffect(() => {
     if (!supabaseEnabled || !supabase) { setMode('noconfig'); return }
     let active = true
-    const resolve = async (uid: string) => {
-      try { return await getAgent(uid) } catch { return null }
+    const sb = supabase
+    // Garde-fou : si l'init reste bloquée (réseau lent, getSession qui ne répond pas…), on ne
+    // laisse pas l'écran « Connexion… » tourner sans fin — on retombe sur l'écran de connexion.
+    const garde = setTimeout(() => { if (active) setMode((m) => (m === 'loading' ? 'login' : m)) }, 10000)
+    // Résout la fiche agent puis bascule en « live ». Toujours appelée HORS du callback d'auth.
+    const entrer = (uid: string) => {
+      getAgent(uid).catch(() => null).then((ag) => { if (active) { setAgent(ag); setMode('live') } })
     }
-    supabase.auth.getSession().then(async ({ data }) => {
+    sb.auth.getSession().then(({ data }) => {
       if (!active) return
       if (!data.session) { setMode('login'); return }
-      setAgent(await resolve(data.session.user.id))
-      if (active) setMode('live')
+      entrer(data.session.user.id)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_e, session) => {
+    const { data: sub } = sb.auth.onAuthStateChange((_e, session) => {
       if (!active) return
       if (!session) { setAgent(null); setMode('login'); return }
-      setAgent(await resolve(session.user.id))
-      setMode('live')
+      // NE JAMAIS faire d'appel Supabase (ni await) directement dans ce callback : il s'exécute
+      // en tenant le verrou interne de supabase-js, ce qui fige getSession() (écran « Connexion… »
+      // qui tourne à l'infini). On diffère l'appel hors du verrou ; entrer() bascule en « live »
+      // une fois la fiche agent résolue.
+      setTimeout(() => { if (active) entrer(session.user.id) }, 0)
     })
-    return () => { active = false; sub.subscription.unsubscribe() }
+    return () => { active = false; clearTimeout(garde); sub.subscription.unsubscribe() }
   }, [])
 
   const logout = () => supabase?.auth.signOut()

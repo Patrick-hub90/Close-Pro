@@ -3,7 +3,7 @@ import { fcfa, hms, telLink, waLink, isLate } from '../lib'
 
 // Compte à rebours unique (closeuse ET propriétaire). Tourne vers l'heure cible selon le statut ;
 // passe en « -HH:MM:SS » rouge une fois dépassé (jamais de « + »).
-function Timer({ o, now, paused }: { o: Order; now: number; paused?: boolean }) {
+function Timer({ o, now }: { o: Order; now: number }) {
   let cible: number | undefined
   let ic = 'ti-clock'
   if (o.statut === 'a_appeler') { cible = o.deadline; ic = 'ti-clock' }
@@ -11,7 +11,9 @@ function Timer({ o, now, paused }: { o: Order; now: number; paused?: boolean }) 
   else if (o.statut === 'injoignable') { cible = o.rappelAt; ic = 'ti-phone-off' }
   else if (o.statut === 'reporte') { cible = o.rappelAt; ic = 'ti-calendar-event' }
   if (!cible) return null
-  if (paused) return <span className="chip muted"><i className="ti ti-player-pause" aria-hidden="true" /> en pause</span>
+  // Le décompte tourne TOUJOURS (jamais « en pause ») : un rappel / report programmé après la fin des
+  // horaires doit continuer à décompter vers son heure. Seule la PÉNALITÉ de retard est désactivée hors
+  // horaires (cf. `late`) — les performances de la closeuse ne sont pas comptées pendant la pause.
   const rem = cible - now
   if (rem < 0) {
     return <span className="chip dang"><i className="ti ti-alert-triangle" aria-hidden="true" /> -{hms(-rem)}</span>
@@ -63,7 +65,7 @@ export default function OrderCard({
       ) : null}
       <div className="r1">
         <span className="nm">{o.numero}</span>
-        <Timer o={o} now={now} paused={paused} />
+        <Timer o={o} now={now} />
       </div>
       <div className="sub">
         {o.client} · {o.produit}{o.quantite > 1 ? ` · ×${o.quantite}` : ''}

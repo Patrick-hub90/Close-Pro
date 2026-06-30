@@ -554,7 +554,7 @@ export default function CloseuseApp({
           ) : null}
 
           {!workingNow && agent?.horaires?.debut ? (
-            <div className="hoursbar"><i className="ti ti-player-pause" aria-hidden="true" /> Hors de tes horaires ({agent.horaires.debut}–{agent.horaires.fin}) — décomptes en pause</div>
+            <div className="hoursbar"><i className="ti ti-clock-off" aria-hidden="true" /> Hors de tes horaires ({agent.horaires.debut}–{agent.horaires.fin}) — les retards ne te sont pas comptés ; tes rappels restent à l'heure</div>
           ) : null}
 
           {counts.retard > 0 && !selectMode ? (

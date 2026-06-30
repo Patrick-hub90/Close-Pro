@@ -20,13 +20,16 @@ on conflict (key) do nothing;
 --   update app_config set value='TON_TOKEN'   where key='telegram_token';
 --   update app_config set value='TON_CHAT_ID' where key='telegram_chat_id';
 
--- 2a-bis) Config Email (Resend) : les memes alertes closeuses partent aussi par email.
+-- 2a-bis) Config Email (Resend) : les memes alertes closeuses partent aussi par email,
+--         et le proprietaire recoit les alertes de retard par email (owner_email).
 insert into app_config (key, value) values
   ('resend_api_key', 'COLLER_VOTRE_CLE_RESEND'),
-  ('resend_from',    'Close-Pro <onboarding@resend.dev>')  -- a remplacer par un expediteur d'un domaine verifie dans Resend
+  ('resend_from',    'Close-Pro <onboarding@resend.dev>'),  -- a remplacer par un expediteur d'un domaine verifie dans Resend
+  ('owner_email',    'contact.velaura@gmail.com')           -- email qui recoit les alertes proprietaire
 on conflict (key) do nothing;
 --   update app_config set value='re_xxxxxxxx'                          where key='resend_api_key';
 --   update app_config set value='Close-Pro <alertes@tondomaine.com>'   where key='resend_from';
+--   update app_config set value='ton-email@gmail.com'                  where key='owner_email';
 
 -- 2b) Drapeau de notification sur les tentatives (pour notifier "traite" une seule fois)
 alter table call_attempts add column if not exists notifie boolean default false;
@@ -128,10 +131,13 @@ end; $$;
 -- 5) UNE SEULE alerte par commande en retard (10 min depassees ou rappel manque),
 --    pendant les heures de travail. Pas d'escalade.
 create or replace function notify_late_orders() returns void language plpgsql as $$
-declare tok text; chat text; r record; msg text; prefix text;
+declare tok text; chat text; resend text; rfrom text; oemail text; r record; msg text; prefix text;
 begin
-  select value into tok  from app_config where key = 'telegram_token';
-  select value into chat from app_config where key = 'telegram_chat_id';
+  select value into tok    from app_config where key = 'telegram_token';
+  select value into chat   from app_config where key = 'telegram_chat_id';
+  select value into resend from app_config where key = 'resend_api_key';
+  select value into rfrom  from app_config where key = 'resend_from';
+  select value into oemail from app_config where key = 'owner_email';
   if tok is null or chat is null or tok like 'COLLER%' or chat like 'COLLER%' then return; end if;
 
   for r in
@@ -165,6 +171,10 @@ begin
       headers := '{"Content-Type":"application/json"}'::jsonb,
       body := jsonb_build_object('chat_id', chat, 'text', msg)
     );
+    -- Meme alerte au proprietaire par email (si Resend + owner_email configures).
+    perform envoyer_email(resend, rfrom, oemail,
+      'Close-Pro — ' || (case when r.rappel_at is not null then 'rappel depasse' else 'retard 10 min' end) || ' : ' || r.numero,
+      msg);
     insert into events (order_id, type, severite, canal_notif, destinataire, notifie, envoye_at)
     values (r.id, 'retard', 'alerte', 'telegram', 'owner', true, now());
   end loop;
@@ -183,9 +193,61 @@ drop function if exists notify_traitements();
 --       'rap10:<rappel_at>'-> ce rappel n'est toujours pas traite 10 min apres l'heure prevue
 --     Une commande genere donc jusqu'a 2 alertes : a l'apparition, puis une relance a +10 min.
 
--- Helper : alerte la closeuse sur les canaux configures (Telegram + email via Resend) puis
--- journalise le marqueur (dedup unique, quel que soit le nombre de canaux).
-drop function if exists cz_envoyer(text, text, uuid, text, text);  -- signature elargie (ajout email)
+-- Helper reutilisable : envoie un email via l'API Resend (asynchrone, pg_net). No-op si non configure.
+create or replace function envoyer_email(p_resend text, p_from text, p_to text, p_sujet text, p_corps text)
+  returns void language plpgsql as $$
+begin
+  if p_resend is null or p_resend like 'COLLER%' or p_to is null or p_to = '' then return; end if;
+  perform net.http_post(
+    url := 'https://api.resend.com/emails',
+    headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || p_resend),
+    body := jsonb_build_object('from', p_from, 'to', jsonb_build_array(p_to), 'subject', p_sujet, 'text', p_corps)
+  );
+end; $$;
+
+-- Diagnostic : envoie un email de test SYNCHRONE et renvoie la reponse EXACTE de Resend (status + corps),
+-- pour voir tout de suite ce qui bloque. A lancer dans SQL Editor :  select cz_diag_email('ton-email@gmail.com');
+create or replace function cz_diag_email(p_to text)
+  returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare k text; f text; v_status int; v_content text;
+begin
+  select value into k from app_config where key = 'resend_api_key';
+  select value into f from app_config where key = 'resend_from';
+  if k is null or k like 'COLLER%' then
+    return jsonb_build_object('ok', false, 'erreur', 'resend_api_key non configuree : colle ta cle Resend dans app_config.');
+  end if;
+  begin
+    select status, content into v_status, v_content
+    from extensions.http((
+      'POST',
+      'https://api.resend.com/emails',
+      array[extensions.http_header('Authorization', 'Bearer ' || k)],
+      'application/json',
+      jsonb_build_object('from', f, 'to', jsonb_build_array(p_to), 'subject', 'Test Close-Pro',
+                         'text', 'Email de test Close-Pro : si tu lis ceci, l''envoi fonctionne.')::text
+    )::extensions.http_request);
+  exception when others then
+    return jsonb_build_object('ok', false, 'erreur', 'Appel HTTP echoue : ' || SQLERRM);
+  end;
+  return jsonb_build_object('ok', v_status = 200, 'status', v_status, 'from_utilise', f, 'reponse_resend', v_content);
+end $$;
+grant execute on function cz_diag_email(text) to authenticated;
+
+-- Diagnostic : liste les closeuses avec l'email et le chat Telegram reellement vus par le serveur.
+-- A lancer dans SQL Editor :  select * from cz_diag_closeuses();   (email NULL = lien auth_uid a corriger)
+create or replace function cz_diag_closeuses()
+  returns table(nom text, email text, telegram_chat_id text) language sql
+  security definer set search_path = public, auth as $$
+  select a.nom, u.email::text, a.telegram_chat_id
+  from agents a left join auth.users u on u.id = a.auth_uid
+  where a.role = 'closer'
+  order by a.nom;
+$$;
+grant execute on function cz_diag_closeuses() to authenticated;
+
+-- Helper : alerte la closeuse sur les canaux configures (Telegram + email Resend) puis journalise
+-- le marqueur (dedup unique, quel que soit le nombre de canaux).
+drop function if exists cz_envoyer(text, text, uuid, text, text);  -- ancienne signature (avant email)
 create or replace function cz_envoyer(
   p_tok text, p_chat text, p_resend text, p_from text, p_email text,
   p_order uuid, p_marqueur text, p_titre text, p_msg text
@@ -200,13 +262,7 @@ begin
     );
   end if;
   -- Email (si la cle Resend est configuree et l'email de la closeuse connu)
-  if p_resend is not null and p_resend not like 'COLLER%' and p_email is not null and p_email <> '' then
-    perform net.http_post(
-      url := 'https://api.resend.com/emails',
-      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || p_resend),
-      body := jsonb_build_object('from', p_from, 'to', jsonb_build_array(p_email), 'subject', p_titre, 'text', p_msg)
-    );
-  end if;
+  perform envoyer_email(p_resend, p_from, p_email, p_titre, p_msg);
   insert into events (order_id, type, severite, canal_notif, destinataire, notifie, envoye_at, payload)
   values (p_order, 'cz_appel', 'info', 'telegram', 'closeuse', true, now(), jsonb_build_object('m', p_marqueur));
 end; $$;

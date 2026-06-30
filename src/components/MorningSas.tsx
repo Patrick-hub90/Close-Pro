@@ -116,7 +116,8 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
               <span className="nm">{o.client} · <span className="dc-num">{o.numero}</span></span>
               <span className="amt">{fcfa(o.total)}</span>
             </div>
-            <div className="sub">{o.produit} · {o.adresse}</div>
+            <div className="sub">{o.produit}{o.quantite > 1 ? ` · ×${o.quantite}` : ''}</div>
+            <div className="dadr"><i className="ti ti-map-pin" aria-hidden="true" /> {o.adresse || 'Adresse non renseignée'}{o.region ? ` · ${o.region}` : ''}</div>
 
             {aSaisir ? (
               <label className="dcost">

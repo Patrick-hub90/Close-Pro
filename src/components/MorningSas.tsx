@@ -2,25 +2,39 @@ import { useEffect, useState } from 'react'
 import type { Order } from '../types'
 import { fcfa } from '../lib'
 
-type Issue = 'livre' | 'annule' | 'reporte'
+type Issue = 'livre' | 'annule'                        // actions directes
+type Appel = 'a_rappeler' | 'injoignable' | 'reporte'  // statuts d'appel (avec heure de rappel)
+type Marque = Issue | Appel
 
-// Dates de re-livraison calées sur le fuseau du Cameroun (WAT = UTC+1), comme la logique de jour du
-// SAS — ainsi la frontière du report coïncide avec celle de la revue du matin, quel que soit le
-// réglage de l'horloge du téléphone. La commande revient le matin (heure Cameroun) du jour choisi.
-const WAT_OFFSET_MS = 60 * 60 * 1000
-function addDaysMs(n: number) { const d = new Date(Date.now() + WAT_OFFSET_MS); d.setUTCDate(d.getUTCDate() + n); d.setUTCHours(0, 0, 0, 0); return d.getTime() - WAT_OFFSET_MS }
-function toDateInput(ms: number) { const d = new Date(ms + WAT_OFFSET_MS); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}` }
-function fromDateInput(s: string): number | undefined {
-  if (!s) return undefined
-  const [y, m, d] = s.split('-').map(Number)
-  if (!y || !m || !d) return undefined
-  return Date.UTC(y, m - 1, d, 0, 0, 0) - WAT_OFFSET_MS // minuit WAT du jour choisi
+const LABELS: Record<Marque, string> = {
+  livre: 'Livré', annule: 'Annulé', a_rappeler: 'À rappeler', injoignable: 'Injoignable', reporte: 'Reporté',
 }
-function fmtJour(ms: number) { return new Date(ms).toLocaleDateString('fr-FR', { timeZone: 'Africa/Douala', weekday: 'long', day: '2-digit', month: '2-digit' }) }
 
-export default function MorningSas({ orders, onResolve, onSetCost }: {
+// Sélecteur d'heure de rappel (date + heure, horloge locale — comme l'écran d'appel).
+function toLocalInput(ms: number): string {
+  const d = new Date(ms); const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
+function fromLocalInput(s: string): number | undefined {
+  if (!s) return undefined; const t = new Date(s).getTime(); return Number.isFinite(t) ? t : undefined
+}
+function fmtDt(ms: number) { return new Date(ms).toLocaleString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }
+function presetsRappel(): { label: string; at: number }[] {
+  const now = Date.now()
+  const at = (h: number, m: number, addDays: number) => { const x = new Date(); x.setDate(x.getDate() + addDays); x.setHours(h, m, 0, 0); return x.getTime() }
+  const soir = at(18, 0, 0) > now ? at(18, 0, 0) : at(18, 0, 1)
+  return [
+    { label: 'Dans 1h', at: now + 3600_000 },
+    { label: 'Dans 2h', at: now + 2 * 3600_000 },
+    { label: 'Ce soir 18h', at: soir },
+    { label: 'Demain 9h', at: at(9, 0, 1) },
+  ]
+}
+
+export default function MorningSas({ orders, onResolve, onAppel, onSetCost }: {
   orders: Order[]
-  onResolve?: (id: string, issue: Issue, dateMs?: number) => void
+  onResolve?: (id: string, issue: Issue) => void
+  onAppel?: (id: string, statut: Appel, dateMs: number) => void
   onSetCost?: (id: string, cout: number) => void
 }) {
   // Liste vivante : les cartes déjà traitées restent affichées (avec ✓), MAIS toute commande qui
@@ -34,7 +48,7 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
       return nouveaux.length ? [...prev, ...nouveaux] : prev
     })
   }, [orders])
-  const [resolved, setResolved] = useState<Record<string, Issue>>({})
+  const [resolved, setResolved] = useState<Record<string, Marque>>({})
   // Coûts saisis pendant la session (reflètent ce que le parent a déjà mis à jour).
   const [costs, setCosts] = useState<Record<string, number>>(() => {
     const m: Record<string, number> = {}
@@ -42,9 +56,10 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
     return m
   })
   const [erreur, setErreur] = useState<string[] | null>(null)
-  // Fenêtre de report : choix de la date de re-livraison.
-  const [repOrder, setRepOrder] = useState<Order | null>(null)
-  const [repDate, setRepDate] = useState('')
+  // Fenêtre de planification d'un rappel (injoignable / à rappeler / reporté).
+  const [sched, setSched] = useState<{ order: Order; statut: Appel } | null>(null)
+  const [schedAt, setSchedAt] = useState('')
+
   // N'affiche que les commandes encore dans la revue (orders) OU déjà traitées cette session : évite
   // une « carte fantôme » si une commande sort de sasOrders par un chemin externe (refetch / autre agent).
   const visibles = list.filter((o) => resolved[o.id] || orders.some((x) => x.id === o.id))
@@ -54,20 +69,22 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
   const coutDe = (o: Order) => costs[o.id] ?? o.coutLivraison ?? 0
 
   const mark = (o: Order, issue: Issue) => {
-    // Livré exige un coût de livraison.
     if (issue === 'livre' && !coutDe(o)) { setErreur([o.numero]); return }
-    // Reporté : on demande d'abord la date de re-livraison.
-    if (issue === 'reporte') { setRepOrder(o); setRepDate(toDateInput(addDaysMs(1))); return }
     setResolved((p) => ({ ...p, [o.id]: issue }))
     onResolve?.(o.id, issue)
   }
 
-  const confirmReport = () => {
-    const ms = fromDateInput(repDate)
-    if (!repOrder || !ms) return
-    setResolved((p) => ({ ...p, [repOrder.id]: 'reporte' }))
-    onResolve?.(repOrder.id, 'reporte', ms)
-    setRepOrder(null)
+  // Menu déroulant : un statut d'appel (injoignable / à rappeler / reporté) → on demande l'heure de rappel.
+  const choisirAppel = (o: Order, statut: Appel) => {
+    setSched({ order: o, statut })
+    setSchedAt(toLocalInput(Date.now() + 3600_000)) // défaut : dans 1h
+  }
+  const confirmSched = () => {
+    const ms = fromLocalInput(schedAt)
+    if (!sched || !ms) return
+    setResolved((p) => ({ ...p, [sched.order.id]: sched.statut }))
+    onAppel?.(sched.order.id, sched.statut, ms)
+    setSched(null)
   }
 
   const saisirCout = (o: Order, v: number) => {
@@ -85,7 +102,7 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
     setResolved(next)
   }
 
-  const repMs = fromDateInput(repDate)
+  const schedMs = fromLocalInput(schedAt)
 
   return (
     <div className="app">
@@ -110,6 +127,7 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
         // L'affichage champ-de-saisie vs lecture seule se décide sur le coût CONNU À L'OUVERTURE,
         // pas sur la saisie en cours : sinon le champ disparaîtrait dès le 1er chiffre tapé.
         const aSaisir = !o.coutLivraison
+        const appelChoisi = r === 'a_rappeler' || r === 'injoignable' || r === 'reporte'
         return (
           <div className={`dcard ${r ? 'done' : ''} ${manque ? 'nocost' : ''}`} key={o.id}>
             <div className="dch">
@@ -140,9 +158,14 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
               <button className={`ret ${r === 'annule' ? 'on' : ''}`} onClick={() => mark(o, 'annule')}>
                 <i className="ti ti-x" aria-hidden="true" />{r === 'annule' ? 'Annulé ✓' : 'Annulé'}
               </button>
-              <button className={`rep ${r === 'reporte' ? 'on' : ''}`} onClick={() => mark(o, 'reporte')}>
-                <i className="ti ti-calendar" aria-hidden="true" />{r === 'reporte' ? 'Reporté ✓' : 'Reporté'}
-              </button>
+              <select className={`sas-sel ${appelChoisi ? 'on' : ''}`} value=""
+                onChange={(e) => { const v = e.target.value as Appel; if (v) { choisirAppel(o, v); e.target.value = '' } }}
+                aria-label="Autre statut">
+                <option value="">{r === 'a_rappeler' || r === 'injoignable' || r === 'reporte' ? `${LABELS[r]} ✓` : 'Autre…'}</option>
+                <option value="injoignable">Injoignable</option>
+                <option value="a_rappeler">À rappeler</option>
+                <option value="reporte">Reporté</option>
+              </select>
             </div>
           </div>
         )
@@ -156,24 +179,24 @@ export default function MorningSas({ orders, onResolve, onSetCost }: {
         )}
       </div>
 
-      {/* Fenêtre de report : date de re-livraison */}
-      {repOrder ? (
-        <div className="sched-ov" onClick={() => setRepOrder(null)}>
+      {/* Fenêtre de planification d'un rappel (injoignable / à rappeler / reporté) */}
+      {sched ? (
+        <div className="sched-ov" onClick={() => setSched(null)}>
           <div className="sched-modal" onClick={(e) => e.stopPropagation()}>
             <div className="sm-head">
-              <span>Reporter la livraison · {repOrder.numero}</span>
-              <button className="sm-x" onClick={() => setRepOrder(null)} aria-label="Fermer"><i className="ti ti-x" aria-hidden="true" /></button>
+              <span>{LABELS[sched.statut]} · {sched.order.numero} — quand rappeler ?</span>
+              <button className="sm-x" onClick={() => setSched(null)} aria-label="Fermer"><i className="ti ti-x" aria-hidden="true" /></button>
             </div>
             <div className="sched-presets">
-              {[{ label: 'Demain', n: 1 }, { label: 'Dans 2 jours', n: 2 }, { label: 'Dans 3 jours', n: 3 }].map((p) => (
-                <button key={p.n} className={repMs === addDaysMs(p.n) ? 'on' : ''} onClick={() => setRepDate(toDateInput(addDaysMs(p.n)))}>{p.label}</button>
+              {presetsRappel().map((p) => (
+                <button key={p.label} className={schedAt === toLocalInput(p.at) ? 'on' : ''} onClick={() => setSchedAt(toLocalInput(p.at))}>{p.label}</button>
               ))}
             </div>
-            <label className="sched-dt"><span>Date précise</span>
-              <input type="date" value={repDate} min={toDateInput(addDaysMs(1))} onChange={(e) => setRepDate(e.target.value)} />
+            <label className="sched-dt"><span>Date et heure précises</span>
+              <input type="datetime-local" value={schedAt} min={toLocalInput(Date.now())} onChange={(e) => setSchedAt(e.target.value)} />
             </label>
-            <button className="sm-ok rep" disabled={!repMs || (repMs <= addDaysMs(0))} onClick={confirmReport}>
-              <i className="ti ti-check" aria-hidden="true" /> Reporter {repMs ? `· ${fmtJour(repMs)}` : ''}
+            <button className="sm-ok rep" disabled={!schedMs} onClick={confirmSched}>
+              <i className="ti ti-check" aria-hidden="true" /> Confirmer {schedMs ? `· ${fmtDt(schedMs)}` : ''}
             </button>
           </div>
         </div>

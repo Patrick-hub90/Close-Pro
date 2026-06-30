@@ -471,6 +471,14 @@ export default function CloseuseApp({
     if (live && supabase) void supabase.from('orders').update({ cout_livraison: cout }).eq('id', orderId)
   }
 
+  // Depuis le SAS : remet une livraison dans le flux d'appel (injoignable / à rappeler / reporté) avec
+  // une heure de rappel. La commande quitte la revue et réapparaît dans « Rappels » à l'heure choisie.
+  function appelDepuisSas(orderId: string, statut: Statut, dateMs: number) {
+    const o = orders.find((x) => x.id === orderId)
+    if (!o) return
+    handleResult(o, { statut, rappelAt: dateMs })
+  }
+
   if (call) {
     return <CallMode queue={call.queue} index={call.index} onResult={handleResult} onClose={() => setCall(null)} />
   }
@@ -480,7 +488,7 @@ export default function CloseuseApp({
   // être lancé (gardes sasLock dans openAt/openForce/startQueue). Elle se ferme d'elle-même quand
   // sasOrders est vide — pas de bouton pour l'esquiver, pas de borne de fin.
   if (sasLock) {
-    return <div className="app"><MorningSas orders={sasOrders} onResolve={resolveSas} onSetCost={setSasCost} /></div>
+    return <div className="app"><MorningSas orders={sasOrders} onResolve={resolveSas} onAppel={appelDepuisSas} onSetCost={setSasCost} /></div>
   }
 
   const emptySub = filtre === 'a_appeler' ? 'Aucune commande à appeler pour le moment.'

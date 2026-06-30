@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase, type Agent } from '../lib/supabase'
 import { changePassword } from '../lib/account'
+import { pushPrompt, pushPermission, pushSupported } from '../lib/onesignal'
 import Closeuses from './Closeuses'
 import Pays from './Pays'
 
@@ -53,6 +54,14 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
     else setTgCode(d.code) // secours : pas de username de bot configuré
   }
 
+  // Notifications push (OneSignal) : la closeuse autorise une fois et reçoit les alertes sur son téléphone.
+  const [pushPerm, setPushPerm] = useState<'default' | 'granted' | 'denied'>(pushPermission())
+  useEffect(() => {
+    const id = setInterval(() => setPushPerm(pushPermission()), 2000)
+    return () => clearInterval(id)
+  }, [])
+  function activerPush() { pushPrompt(); setTimeout(() => setPushPerm(pushPermission()), 1500) }
+
   async function savePw(e: React.FormEvent) {
     e.preventDefault()
     if (pw.length < 6) { setPwMsg({ txt: '6 caractères minimum.' }); return }
@@ -80,6 +89,22 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
           <button type="submit" disabled={pwBusy}>{pwBusy ? 'Mise à jour…' : 'Mettre à jour'}</button>
         </form>
       </section>
+
+      {pushSupported() ? (
+        <section className="acct">
+          <div className="acct-t">Notifications sur ce téléphone</div>
+          {pushPerm === 'granted' ? (
+            <div className="acct-ok"><i className="ti ti-bell" aria-hidden="true" /> Activées — tu reçois les alertes ici, même l'application fermée.</div>
+          ) : pushPerm === 'denied' ? (
+            <div className="acct-hint">Notifications bloquées. Autorise-les pour ce site dans les réglages du navigateur, puis recharge l'application.</div>
+          ) : (
+            <>
+              <button type="button" onClick={activerPush}><i className="ti ti-bell" aria-hidden="true" /> Activer les notifications</button>
+              <div className="acct-hint">Reçois une alerte sur ton téléphone à chaque commande à appeler — sans Telegram ni email.</div>
+            </>
+          )}
+        </section>
+      ) : null}
 
       <section className="acct">
         <div className="acct-t">Mon Telegram</div>

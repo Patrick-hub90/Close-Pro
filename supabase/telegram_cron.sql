@@ -31,6 +31,13 @@ on conflict (key) do nothing;
 --   update app_config set value='Close-Pro <alertes@tondomaine.com>'   where key='resend_from';
 --   update app_config set value='ton-email@gmail.com'                  where key='owner_email';
 
+-- 2a-ter) Config Push (OneSignal) : notification directement sur le telephone des closeuses.
+insert into app_config (key, value) values
+  ('onesignal_app_id',  'dcb18cac-e4a6-468a-978b-703a1759758e'),
+  ('onesignal_api_key', 'COLLER_VOTRE_CLE_API_ONESIGNAL')
+on conflict (key) do nothing;
+--   update app_config set value='os_v2_app_xxxxxxxx' where key='onesignal_api_key';
+
 -- 2b) Drapeau de notification sur les tentatives (pour notifier "traite" une seule fois)
 alter table call_attempts add column if not exists notifie boolean default false;
 
@@ -209,6 +216,25 @@ begin
   );
 end; $$;
 
+-- Helper reutilisable : envoie une notification PUSH via OneSignal a une closeuse, ciblee par son
+-- external_id (= id de l'agent). No-op si non configure ou external_id absent.
+create or replace function envoyer_push(p_app text, p_key text, p_ext text, p_titre text, p_msg text)
+  returns void language plpgsql as $$
+begin
+  if p_app is null or p_app like 'COLLER%' or p_key is null or p_key like 'COLLER%' or p_ext is null or p_ext = '' then return; end if;
+  perform net.http_post(
+    url := 'https://api.onesignal.com/notifications',
+    headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Key ' || p_key),
+    body := jsonb_build_object(
+      'app_id', p_app,
+      'target_channel', 'push',
+      'include_aliases', jsonb_build_object('external_id', jsonb_build_array(p_ext)),
+      'headings', jsonb_build_object('en', p_titre, 'fr', p_titre),
+      'contents', jsonb_build_object('en', p_msg, 'fr', p_msg)
+    )
+  );
+end; $$;
+
 -- Diagnostic : envoie un email de test SYNCHRONE et renvoie la reponse EXACTE de Resend (status + corps),
 -- pour voir tout de suite ce qui bloque. A lancer dans SQL Editor :  select cz_diag_email('ton-email@gmail.com');
 create or replace function cz_diag_email(p_to text)
@@ -249,11 +275,42 @@ create or replace function cz_diag_closeuses()
 $$;
 revoke execute on function cz_diag_closeuses() from public;  -- diagnostic admin : SQL Editor uniquement
 
--- Helper : alerte la closeuse sur les canaux configures (Telegram + email Resend) puis journalise
--- le marqueur (dedup unique, quel que soit le nombre de canaux).
-drop function if exists cz_envoyer(text, text, uuid, text, text);  -- ancienne signature (avant email)
+-- Diagnostic : envoie une notification push de test (SYNCHRONE) a un external_id (= id agent) et
+-- renvoie la reponse exacte de OneSignal. A lancer :  select cz_diag_push('<id-de-l-agent>');
+create or replace function cz_diag_push(p_ext text)
+  returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_app text; v_key text; v_status int; v_content text;
+begin
+  select value into v_app from app_config where key = 'onesignal_app_id';
+  select value into v_key from app_config where key = 'onesignal_api_key';
+  if v_app is null or v_app like 'COLLER%' or v_key is null or v_key like 'COLLER%' then
+    return jsonb_build_object('ok', false, 'erreur', 'onesignal_app_id / onesignal_api_key non configures dans app_config.');
+  end if;
+  begin
+    select status, content into v_status, v_content
+    from extensions.http((
+      'POST', 'https://api.onesignal.com/notifications',
+      array[extensions.http_header('Authorization', 'Key ' || v_key)],
+      'application/json',
+      jsonb_build_object('app_id', v_app, 'target_channel', 'push',
+        'include_aliases', jsonb_build_object('external_id', jsonb_build_array(p_ext)),
+        'headings', jsonb_build_object('en', 'Test Close-Pro'),
+        'contents', jsonb_build_object('en', 'Notification de test Close-Pro.'))::text
+    )::extensions.http_request);
+  exception when others then
+    return jsonb_build_object('ok', false, 'erreur', 'Appel HTTP echoue : ' || SQLERRM);
+  end;
+  return jsonb_build_object('ok', v_status = 200, 'status', v_status, 'reponse_onesignal', v_content);
+end $$;
+revoke execute on function cz_diag_push(text) from public;  -- diagnostic admin : SQL Editor uniquement
+
+-- Helper : alerte la closeuse sur tous les canaux configures (Telegram + email Resend + push OneSignal)
+-- puis journalise le marqueur (dedup unique, quel que soit le nombre de canaux).
+drop function if exists cz_envoyer(text, text, uuid, text, text);                          -- v1 (avant email)
+drop function if exists cz_envoyer(text, text, text, text, text, uuid, text, text, text);  -- v2 (avant push)
 create or replace function cz_envoyer(
   p_tok text, p_chat text, p_resend text, p_from text, p_email text,
+  p_os_app text, p_os_key text, p_ext text,
   p_order uuid, p_marqueur text, p_titre text, p_msg text
 ) returns void language plpgsql as $$
 begin
@@ -267,30 +324,36 @@ begin
   end if;
   -- Email (si la cle Resend est configuree et l'email de la closeuse connu)
   perform envoyer_email(p_resend, p_from, p_email, p_titre, p_msg);
+  -- Push OneSignal (si configure et la closeuse a active les notifications sur son telephone)
+  perform envoyer_push(p_os_app, p_os_key, p_ext, p_titre, p_msg);
   insert into events (order_id, type, severite, canal_notif, destinataire, notifie, envoye_at, payload)
   values (p_order, 'cz_appel', 'info', 'telegram', 'closeuse', true, now(), jsonb_build_object('m', p_marqueur));
 end; $$;
 
 create or replace function notify_closeuses() returns void language plpgsql
   security definer set search_path = public, auth, extensions as $$
-declare tok text; resend text; rfrom text; r record; cli text; mk text;
+declare tok text; resend text; rfrom text; os_app text; os_key text; os_ok boolean; r record; cli text; mk text;
 begin
-  select value into tok    from app_config where key = 'telegram_token';
-  select value into resend from app_config where key = 'resend_api_key';
-  select value into rfrom  from app_config where key = 'resend_from';
-  -- Rien a faire si aucun canal n'est configure (ni Telegram, ni email).
-  if (tok is null or tok like 'COLLER%') and (resend is null or resend like 'COLLER%') then return; end if;
+  select value into tok     from app_config where key = 'telegram_token';
+  select value into resend  from app_config where key = 'resend_api_key';
+  select value into rfrom   from app_config where key = 'resend_from';
+  select value into os_app  from app_config where key = 'onesignal_app_id';
+  select value into os_key  from app_config where key = 'onesignal_api_key';
+  os_ok := os_app is not null and os_app not like 'COLLER%' and os_key is not null and os_key not like 'COLLER%';
+  -- Rien a faire si aucun canal n'est configure (ni Telegram, ni email, ni push).
+  if (tok is null or tok like 'COLLER%') and (resend is null or resend like 'COLLER%') and not os_ok then return; end if;
 
   for r in
     select o.id, o.numero, o.nom_complet, o.region, o.statut, o.rappel_at, o.appel_deadline,
-           a.telegram_chat_id as chat, a.horaires as horaires, u.email as email,
+           a.telegram_chat_id as chat, a.horaires as horaires, u.email as email, a.id::text as ext,
            coalesce(c.fuseau, 'Africa/Abidjan') as fuseau
     from orders o
     join agents a on a.id = o.closeuse_id
     left join auth.users u on u.id = a.auth_uid
     left join countries c on c.code = o.pays
     where ( (a.telegram_chat_id is not null and a.telegram_chat_id <> '')
-         or (u.email is not null and u.email <> '') )
+         or (u.email is not null and u.email <> '')
+         or os_ok )
       and o.is_backfill = false
       and o.statut in ('a_appeler','a_rappeler','injoignable','reporte')
       and notif_autorisee(coalesce(c.fuseau, 'Africa/Abidjan'), a.horaires)
@@ -301,7 +364,7 @@ begin
     if r.statut = 'a_appeler' and r.rappel_at is null then
       -- (1) Nouvelle commande : alerte des l'apparition.
       if not exists (select 1 from events e where e.order_id = r.id and e.type = 'cz_appel' and e.payload->>'m' = 'new') then
-        perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, r.id, 'new',
+        perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, os_app, os_key, r.ext, r.id, 'new',
           'Nouvelle commande a appeler : ' || r.numero,
           E'\xF0\x9F\x93\x9E Nouvelle commande a appeler : ' || r.numero || E'\n' || cli);
       end if;
@@ -309,7 +372,7 @@ begin
       if r.appel_deadline is not null and r.appel_deadline < now() then
         mk := 'new10:' || to_char(r.appel_deadline, 'YYYYMMDDHH24MI');
         if not exists (select 1 from events e where e.order_id = r.id and e.type = 'cz_appel' and e.payload->>'m' = mk) then
-          perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, r.id, mk,
+          perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, os_app, os_key, r.ext, r.id, mk,
             'Commande pas encore appelee (+10 min) : ' || r.numero,
             E'\xE2\x8F\xB0 Commande pas encore appelee (+10 min) : ' || r.numero || E'\n' || cli);
         end if;
@@ -319,7 +382,7 @@ begin
       -- (2a) Rappel dont l'heure vient de passer : la commande revient dans "a appeler".
       mk := 'rap:' || to_char(r.rappel_at, 'YYYYMMDDHH24MI');
       if not exists (select 1 from events e where e.order_id = r.id and e.type = 'cz_appel' and e.payload->>'m' = mk) then
-        perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, r.id, mk,
+        perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, os_app, os_key, r.ext, r.id, mk,
           'A rappeler maintenant : ' || r.numero,
           E'\xF0\x9F\x94\x94 A rappeler maintenant : ' || r.numero || E'\n' || cli);
       end if;
@@ -327,7 +390,7 @@ begin
       if r.rappel_at + interval '10 minutes' < now() then
         mk := 'rap10:' || to_char(r.rappel_at, 'YYYYMMDDHH24MI');
         if not exists (select 1 from events e where e.order_id = r.id and e.type = 'cz_appel' and e.payload->>'m' = mk) then
-          perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, r.id, mk,
+          perform cz_envoyer(tok, r.chat, resend, rfrom, r.email, os_app, os_key, r.ext, r.id, mk,
             'Rappel pas encore fait (+10 min) : ' || r.numero,
             E'\xE2\x8F\xB0 Rappel pas encore fait (+10 min) : ' || r.numero || E'\n' || cli);
         end if;

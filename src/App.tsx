@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import CloseuseApp from './CloseuseApp'
 import Login from './components/Login'
 import { supabase, supabaseEnabled, getAgent, type Agent } from './lib/supabase'
+import { initPush, pushLogin, pushLogout } from './lib/onesignal'
 
 type Mode = 'loading' | 'login' | 'live' | 'noconfig'
 
@@ -24,12 +25,13 @@ export default function App() {
     if (!supabaseEnabled || !supabase) { setMode('noconfig'); return }
     let active = true
     const sb = supabase
+    initPush() // notifications push (OneSignal) — chargé une seule fois
     // Garde-fou : si l'init reste bloquée (réseau lent, getSession qui ne répond pas…), on ne
     // laisse pas l'écran « Connexion… » tourner sans fin — on retombe sur l'écran de connexion.
     const garde = setTimeout(() => { if (active) setMode((m) => (m === 'loading' ? 'login' : m)) }, 10000)
     // Résout la fiche agent puis bascule en « live ». Toujours appelée HORS du callback d'auth.
     const entrer = (uid: string) => {
-      getAgent(uid).catch(() => null).then((ag) => { if (active) { setAgent(ag); setMode('live') } })
+      getAgent(uid).catch(() => null).then((ag) => { if (active) { setAgent(ag); setMode('live'); if (ag) pushLogin(ag.id) } })
     }
     sb.auth.getSession().then(({ data }) => {
       if (!active) return
@@ -48,7 +50,7 @@ export default function App() {
     return () => { active = false; clearTimeout(garde); sub.subscription.unsubscribe() }
   }, [])
 
-  const logout = () => supabase?.auth.signOut()
+  const logout = () => { pushLogout(); supabase?.auth.signOut() }
 
   // Hors-ligne : si rien n'a encore pu charger, on explique pourquoi l'écran est vide.
   if (!online && (mode === 'loading' || mode === 'login')) {

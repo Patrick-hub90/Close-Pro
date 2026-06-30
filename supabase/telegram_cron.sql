@@ -263,12 +263,13 @@ begin
 end $$;
 revoke execute on function cz_diag_email(text) from public;  -- diagnostic admin : SQL Editor uniquement
 
--- Diagnostic : liste les closeuses avec l'email et le chat Telegram reellement vus par le serveur.
+-- Diagnostic : liste les closeuses avec leur id (= external_id pour le push), l'email et le chat Telegram.
 -- A lancer dans SQL Editor :  select * from cz_diag_closeuses();   (email NULL = lien auth_uid a corriger)
+drop function if exists cz_diag_closeuses();  -- type de retour elargi (ajout de l'id)
 create or replace function cz_diag_closeuses()
-  returns table(nom text, email text, telegram_chat_id text) language sql
+  returns table(id text, nom text, email text, telegram_chat_id text) language sql
   security definer set search_path = public, auth as $$
-  select a.nom, u.email::text, a.telegram_chat_id
+  select a.id::text, a.nom, u.email::text, a.telegram_chat_id
   from agents a left join auth.users u on u.id = a.auth_uid
   where a.role = 'closer'
   order by a.nom;

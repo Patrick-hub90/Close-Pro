@@ -138,7 +138,9 @@ begin
   select value into resend from app_config where key = 'resend_api_key';
   select value into rfrom  from app_config where key = 'resend_from';
   select value into oemail from app_config where key = 'owner_email';
-  if tok is null or chat is null or tok like 'COLLER%' or chat like 'COLLER%' then return; end if;
+  -- On continue tant qu'au moins un canal est configure (Telegram OU email).
+  if (tok is null or tok like 'COLLER%' or chat is null or chat like 'COLLER%')
+     and (resend is null or resend like 'COLLER%') then return; end if;
 
   for r in
     select o.id, o.numero, o.nom_complet, o.produit_nom, o.total, o.region, o.pays,
@@ -166,11 +168,13 @@ begin
         || r.numero || ' - ' || coalesce(r.nom_complet, '') || ' (' || coalesce(r.region, '-') || ')' || E'\n'
         || coalesce(r.produit_nom, '') || ' - ' || coalesce(r.total, 0)::text || ' FCFA';
 
-    perform net.http_post(
-      url := 'https://api.telegram.org/bot' || tok || '/sendMessage',
-      headers := '{"Content-Type":"application/json"}'::jsonb,
-      body := jsonb_build_object('chat_id', chat, 'text', msg)
-    );
+    if tok is not null and tok not like 'COLLER%' and chat is not null and chat not like 'COLLER%' then
+      perform net.http_post(
+        url := 'https://api.telegram.org/bot' || tok || '/sendMessage',
+        headers := '{"Content-Type":"application/json"}'::jsonb,
+        body := jsonb_build_object('chat_id', chat, 'text', msg)
+      );
+    end if;
     -- Meme alerte au proprietaire par email (si Resend + owner_email configures).
     perform envoyer_email(resend, rfrom, oemail,
       'Close-Pro — ' || (case when r.rappel_at is not null then 'rappel depasse' else 'retard 10 min' end) || ' : ' || r.numero,
@@ -231,7 +235,7 @@ begin
   end;
   return jsonb_build_object('ok', v_status = 200, 'status', v_status, 'from_utilise', f, 'reponse_resend', v_content);
 end $$;
-grant execute on function cz_diag_email(text) to authenticated;
+revoke execute on function cz_diag_email(text) from public;  -- diagnostic admin : SQL Editor uniquement
 
 -- Diagnostic : liste les closeuses avec l'email et le chat Telegram reellement vus par le serveur.
 -- A lancer dans SQL Editor :  select * from cz_diag_closeuses();   (email NULL = lien auth_uid a corriger)
@@ -243,7 +247,7 @@ create or replace function cz_diag_closeuses()
   where a.role = 'closer'
   order by a.nom;
 $$;
-grant execute on function cz_diag_closeuses() to authenticated;
+revoke execute on function cz_diag_closeuses() from public;  -- diagnostic admin : SQL Editor uniquement
 
 -- Helper : alerte la closeuse sur les canaux configures (Telegram + email Resend) puis journalise
 -- le marqueur (dedup unique, quel que soit le nombre de canaux).

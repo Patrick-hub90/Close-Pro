@@ -85,6 +85,7 @@ export default function CloseuseApp({
   const [loading, setLoading] = useState<boolean>(!!live)
   const [filtre, setFiltre] = useState<FiltreId>('a_appeler')
   const [tab, setTab] = useState<Tab>('appels')
+  const [recherche, setRecherche] = useState('')
   const [reports, setReports] = useState<Record<string, number>>(chargerReports)
   const [call, setCall] = useState<{ queue: Order[]; index: number } | null>(null)
   const [selectMode, setSelectMode] = useState(false)
@@ -242,7 +243,25 @@ export default function CloseuseApp({
     [scoped, viewFiltre, now, workingNow]
   )
   const isArchive = viewFiltre === 'archivees'
-  const displayList = isArchive ? archived : liste
+
+  // Recherche : porte sur TOUTES les commandes (actives + archivées), quel que soit le filtre.
+  // Tous les mots saisis doivent être trouvés (numéro, client, téléphone, produit, adresse, région…).
+  const recherching = recherche.trim().length > 0
+  const resultats = useMemo(() => {
+    const mots = recherche.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    if (!mots.length) return []
+    const champs = (o: Order) => [
+      o.numero, o.client, o.telephone, o.whatsapp, o.produit, o.adresse, o.region, o.commentaire,
+      o.extra ? Object.values(o.extra).join(' ') : '',
+    ].join(' ').toLowerCase()
+    const vus = new Set<string>()
+    return [...scoped, ...archived]
+      .filter((o) => { if (vus.has(o.id)) return false; vus.add(o.id); return true })
+      .filter((o) => { const t = champs(o); return mots.every((m) => t.includes(m)) })
+      .sort(byUrgence(now))
+  }, [recherche, scoped, archived, now])
+
+  const displayList = recherching ? resultats : (isArchive ? archived : liste)
 
   // File d'appel UNIFIÉE (indépendante du filtre affiché) : tout ce qui est à appeler
   // maintenant = nouvelles + retards, trié par urgence (les plus anciennes/dépassées d'abord).
@@ -307,7 +326,8 @@ export default function CloseuseApp({
     if (sasLock) return // revue du matin obligatoire : aucun appel tant qu'elle n'est pas vidée
     if (bloqueNouvelle(o)) { setBlockLate(true); return }
     // Ordre imposé UNIQUEMENT sur l'onglet « À appeler » ; libre sur les autres filtres.
-    if (viewFiltre === 'a_appeler' && APPELABLES.includes(o.statut)) {
+    // En recherche, on ouvre toujours la commande trouvée (la liste n'est pas une file d'appel).
+    if (!recherching && viewFiltre === 'a_appeler' && APPELABLES.includes(o.statut)) {
       const premiere = displayList.find((x) => APPELABLES.includes(x.statut))
       if (premiere && premiere.id !== o.id) { setOrderBlock(premiere); return }
     }
@@ -544,15 +564,31 @@ export default function CloseuseApp({
             </div>
           ) : null}
 
-          <div className="seg">
-            {FILTRES.map((f) => (
-              <button key={f.id}
-                className={`${viewFiltre === f.id ? 'on' : ''}`}
-                onClick={() => setFiltre(f.id)}>
-                {f.label} <span className="n">{f.id === 'archivees' ? (archived.length || '') : counts[f.id]}</span>
-              </button>
-            ))}
+          <div className="srch">
+            <i className="ti ti-search" aria-hidden="true" />
+            <input value={recherche} onChange={(e) => { setRecherche(e.target.value); if (selectMode) exitSelect() }} type="search"
+              placeholder="Rechercher (n°, client, téléphone, produit, adresse…)" aria-label="Rechercher une commande" />
+            {recherching ? (
+              <button className="srch-x" onClick={() => setRecherche('')} aria-label="Effacer"><i className="ti ti-x" aria-hidden="true" /></button>
+            ) : null}
           </div>
+
+          {recherching ? (
+            <div className="srch-info">
+              <i className="ti ti-list-search" aria-hidden="true" />
+              {resultats.length} résultat{resultats.length > 1 ? 's' : ''} dans toutes les commandes
+            </div>
+          ) : (
+            <div className="seg">
+              {FILTRES.map((f) => (
+                <button key={f.id}
+                  className={`${viewFiltre === f.id ? 'on' : ''}`}
+                  onClick={() => setFiltre(f.id)}>
+                  {f.label} <span className="n">{f.id === 'archivees' ? (archived.length || '') : counts[f.id]}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {live && !isOwner && tgChecked && !tgLinked && !tgDismissed ? (
             <button className="tgbar" onClick={() => setTgModal(true)}>
@@ -584,11 +620,11 @@ export default function CloseuseApp({
                 </div>
               </>
             ) : (
-              !isArchive && displayList.length > 0 ? <button onClick={() => setSelectMode(true)}><i className="ti ti-checkbox" aria-hidden="true" /> Sélectionner</button> : <span />
+              !isArchive && !recherching && displayList.length > 0 ? <button onClick={() => setSelectMode(true)}><i className="ti ti-checkbox" aria-hidden="true" /> Sélectionner</button> : <span />
             )}
           </div>
 
-          {isArchive ? (
+          {isArchive && !recherching ? (
             <div className="archdash">
               <div className="ad-k ok"><b>{archStats.livre}</b><span>Livré</span></div>
               <div className="ad-k dang"><b>{archStats.annule}</b><span>Annulé / Refus</span></div>
@@ -596,14 +632,14 @@ export default function CloseuseApp({
             </div>
           ) : null}
 
-          {loading && !isArchive ? (
+          {loading && !isArchive && !recherching ? (
             <SkeletonList />
           ) : displayList.length === 0 ? (
             <div className="empty">
-              <i className="ti ti-inbox" aria-hidden="true" />
-              <div className="empty-t">Aucune commande</div>
-              <div className="empty-s">{isArchive ? 'Aucune commande archivée.' : emptySub}</div>
-              {isOwner && !isArchive && scoped.length === 0 ? (
+              <i className={`ti ${recherching ? 'ti-search-off' : 'ti-inbox'}`} aria-hidden="true" />
+              <div className="empty-t">{recherching ? 'Aucun résultat' : 'Aucune commande'}</div>
+              <div className="empty-s">{recherching ? `Rien ne correspond à « ${recherche.trim()} ».` : isArchive ? 'Aucune commande archivée.' : emptySub}</div>
+              {isOwner && !isArchive && !recherching && scoped.length === 0 ? (
                 <div className="empty-hint">
                   <i className="ti ti-plug-connected-x" aria-hidden="true" />
                   <span>Source non confirmée pour ce pays. Si tu viens de brancher le Google&nbsp;Sheet, les commandes arrivent ici <b>sous 1&nbsp;min</b>. Sinon, ouvre le Sheet → Apps&nbsp;Script → menu «&nbsp;Exécutions&nbsp;» pour voir si la synchro tourne.</span>

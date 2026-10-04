@@ -180,6 +180,33 @@ function testConnexion() {
   return ok;
 }
 
+/**
+ * Redémarrage à partir d'une ligne précise du Sheet (incluse).
+ * À lancer UNE fois, APRÈS avoir vidé la base (supabase/reset_depart_1715.sql).
+ * Garde-fou : vérifie que la ligne contient bien la commande attendue, sinon ne touche à rien.
+ */
+var LIGNE_DEPART = 1715;      // n° de ligne du Sheet, tel qu'affiché à gauche dans Google Sheets
+var NUMERO_ATTENDU = '1009';  // n° de commande attendu sur cette ligne
+
+function demarrerDepuisLigne() {
+  var sh = _feuille();
+  if (!sh) { Logger.log('❌ Onglet introuvable.'); return; }
+  var values = sh.getDataRange().getValues();
+  var idx = LIGNE_DEPART - 1; // ligne 1 du Sheet = index 0 (en-tête)
+  if (idx < 1 || idx >= values.length) {
+    Logger.log('❌ La ligne ' + LIGNE_DEPART + ' n\'existe pas (le Sheet compte ' + values.length + ' lignes). Rien n\'a été modifié.');
+    return;
+  }
+  var numero = String(_get(values[idx], values[0], COLS.numero) || '').trim();
+  if (numero.replace(/\D/g, '') !== NUMERO_ATTENDU) {
+    Logger.log('❌ ARRÊT : la ligne ' + LIGNE_DEPART + ' contient la commande « ' + numero + ' », pas ' + NUMERO_ATTENDU + '. Rien n\'a été modifié.');
+    return;
+  }
+  PropertiesService.getScriptProperties().setProperty('lastRow', String(idx - 1));
+  Logger.log('✅ Départ fixé à la ligne ' + LIGNE_DEPART + ' (commande ' + numero + '), ' + (values.length - idx) + ' ligne(s) à envoyer.');
+  pushNouvellesCommandes();
+}
+
 /** Ignore tout l'historique déjà présent (démarrage à blanc). Appelée par installer(). */
 function marquerDepart() {
   var sh = _feuille();

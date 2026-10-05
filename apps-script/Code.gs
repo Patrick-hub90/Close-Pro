@@ -189,21 +189,33 @@ var LIGNE_DEPART = 1715;      // n° de ligne du Sheet, tel qu'affiché à gauch
 var NUMERO_ATTENDU = '1009';  // n° de commande attendu sur cette ligne
 
 function demarrerDepuisLigne() {
-  var sh = _feuille();
-  if (!sh) { Logger.log('❌ Onglet introuvable.'); return; }
-  var values = sh.getDataRange().getValues();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
   var idx = LIGNE_DEPART - 1; // ligne 1 du Sheet = index 0 (en-tête)
-  if (idx < 1 || idx >= values.length) {
-    Logger.log('❌ La ligne ' + LIGNE_DEPART + ' n\'existe pas (le Sheet compte ' + values.length + ' lignes). Rien n\'a été modifié.');
+  Logger.log('Fichier : « ' + ss.getName() + ' »  (pays configuré : ' + PAYS + ')');
+  // Inspecte TOUS les onglets pour trouver celui qui a la commande attendue à la ligne de départ.
+  var cible = null, sheets = ss.getSheets();
+  for (var s = 0; s < sheets.length; s++) {
+    var v = sheets[s].getDataRange().getValues();
+    var n = v.length > idx ? String(_get(v[idx], v[0], COLS.numero) || '').trim() : '';
+    Logger.log('  • onglet « ' + sheets[s].getName() + ' » : ' + v.length + ' lignes' + (n ? ' — ligne ' + LIGNE_DEPART + ' = commande ' + n : ''));
+    if (!cible && n.replace(/\D/g, '') === NUMERO_ATTENDU) cible = sheets[s];
+  }
+  if (!cible) {
+    Logger.log('❌ Aucun onglet de CE fichier n\'a la commande ' + NUMERO_ATTENDU + ' à la ligne ' + LIGNE_DEPART + '. Rien n\'a été modifié.');
+    Logger.log('➡ Tu es dans le script d\'un AUTRE fichier. Ouvre le Google Sheet où tu vois la commande ' + NUMERO_ATTENDU + ', puis Extensions > Apps Script DEPUIS ce fichier-là.');
     return;
   }
-  var numero = String(_get(values[idx], values[0], COLS.numero) || '').trim();
-  if (numero.replace(/\D/g, '') !== NUMERO_ATTENDU) {
-    Logger.log('❌ ARRÊT : la ligne ' + LIGNE_DEPART + ' contient la commande « ' + numero + ' », pas ' + NUMERO_ATTENDU + '. Rien n\'a été modifié.');
+  if (_feuille().getName() !== cible.getName()) {
+    Logger.log('❌ La commande ' + NUMERO_ATTENDU + ' est dans l\'onglet « ' + cible.getName() + ' », mais la synchro lit l\'onglet « ' + _feuille().getName() + ' ». Rien n\'a été modifié.');
+    Logger.log('➡ En haut du script, remplace  var FEUILLE = \'\';  par  var FEUILLE = \'' + cible.getName() + '\';  puis enregistre et relance.');
     return;
   }
+  // Réactive la synchro automatique (toutes les minutes) si elle n'existe plus — sans doublon.
+  var trigs = ScriptApp.getProjectTriggers(), aTrig = false;
+  for (var t = 0; t < trigs.length; t++) if (trigs[t].getHandlerFunction() === 'pushNouvellesCommandes') aTrig = true;
+  if (!aTrig) { ScriptApp.newTrigger('pushNouvellesCommandes').timeBased().everyMinutes(1).create(); Logger.log('🔁 Synchro automatique réactivée (toutes les minutes).'); }
   PropertiesService.getScriptProperties().setProperty('lastRow', String(idx - 1));
-  Logger.log('✅ Départ fixé à la ligne ' + LIGNE_DEPART + ' (commande ' + numero + '), ' + (values.length - idx) + ' ligne(s) à envoyer.');
+  Logger.log('✅ Départ fixé à la ligne ' + LIGNE_DEPART + ' (onglet « ' + cible.getName() + ' »), envoi en cours…');
   pushNouvellesCommandes();
 }
 

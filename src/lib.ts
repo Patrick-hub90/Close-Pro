@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Order, FiltreId } from './types'
+import { waNumber } from './normalize'
 
 /** Re-render chaque seconde pour animer les comptes a rebours. */
 export function useNow(intervalMs = 1000): number {
@@ -51,10 +52,18 @@ export function telLink(num: string): string {
   return `tel:${num.replace(/[^\d+]/g, '')}`
 }
 
-export function waLink(num: string, text?: string): string {
-  const digits = num.replace(/\D/g, '')
+/** Numéro WhatsApp du client au format international (chiffres seuls, indicatif du pays ajouté
+ *  s'il manque). Si le champ WhatsApp est vide ou n'est pas un numéro (texte libre saisi par le
+ *  client), on se replie sur le téléphone de la commande. */
+export function waDigits(num: string | null | undefined, pays = 'CM', repli?: string | null): string {
+  let d = waNumber(num ?? '', pays)
+  if (d.length < 8) d = waNumber(repli ?? '', pays)
+  return d
+}
+
+export function waLink(num: string | null | undefined, text?: string, pays = 'CM', repli?: string | null): string {
   const q = text ? `?text=${encodeURIComponent(text)}` : ''
-  return `https://wa.me/${digits}${q}`
+  return `https://wa.me/${waDigits(num, pays, repli)}${q}`
 }
 
 /** Heure de rappel = aujourd'hui a h:m (ms epoch). */

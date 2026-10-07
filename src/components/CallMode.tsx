@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Order, Statut, CallResult } from '../types'
-import { fcfa, telLink, waLink } from '../lib'
+import { fcfa, telLink, waLink, waDigits } from '../lib'
 import { supabase } from '../lib/supabase'
+import Galerie from './Galerie'
 
 type Tone = 'ok' | 'info' | 'rep' | 'warn' | 'wa' | 'dang' | 'liv' | 'new'
 const RESULTATS: { statut: Statut; label: string; icon: string; tone: Tone; sched?: boolean }[] = [
@@ -82,6 +83,7 @@ export default function CallMode({
   const [costError, setCostError] = useState(false)
   const [picked, setPicked] = useState<Statut | null>(null) // statut sélectionné (feedback avant fermeture)
   const [commentError, setCommentError] = useState(false) // commentaire obligatoire manquant
+  const [showGal, setShowGal] = useState(false) // galerie de médias à envoyer au client
   const presets = useMemo(buildPresets, [index])
   const commentRef = useRef<HTMLTextAreaElement>(null)
   const coutRef = useRef<HTMLInputElement>(null)
@@ -97,7 +99,7 @@ export default function CallMode({
 
   const oid = o?.id
   useEffect(() => {
-    setComment(''); setShowEdit(false); setGerePuces(false); setNewPuce(''); setModal(null); setSchedAt(''); setHistOpen(false); setCostError(false); setPicked(null); setCommentError(false)
+    setComment(''); setShowEdit(false); setGerePuces(false); setNewPuce(''); setModal(null); setSchedAt(''); setHistOpen(false); setCostError(false); setPicked(null); setCommentError(false); setShowGal(false)
     setPrix(o?.prixNegocie ?? o?.prixUnitaire ?? 0)
     setCout(o?.coutLivraison ?? 0)
     setProduit(o?.produit ?? '')
@@ -207,9 +209,13 @@ export default function CallMode({
         {!isLivraison ? (
           <div className="big">
             <a className="call-btn" href={telLink(o.telephone)}><i className="ti ti-phone" aria-hidden="true" /> Appeler</a>
-            <a className="wa-btn" href={waLink(o.whatsapp, waText)} target="_blank" rel="noreferrer"><i className="ti ti-brand-whatsapp" aria-hidden="true" /> WhatsApp</a>
+            <a className="wa-btn" href={waLink(o.whatsapp, waText, o.pays, o.telephone)} target="_blank" rel="noreferrer"><i className="ti ti-brand-whatsapp" aria-hidden="true" /> WhatsApp</a>
           </div>
         ) : null}
+
+        <button type="button" className="media-btn" onClick={() => setShowGal(true)}>
+          <i className="ti ti-photo-video" aria-hidden="true" /> Envoyer une photo / vidéo
+        </button>
 
         <label className={`livz ${costError ? 'err' : ''}`}>
           <span><i className="ti ti-truck" aria-hidden="true" /> Coût de livraison (FCFA){costError ? ' — obligatoire pour livrer' : ''}</span>
@@ -313,6 +319,19 @@ export default function CallMode({
 
         <div className="spacer" />
       </div>
+
+      {/* Galerie : envoyer une photo / vidéo au client par WhatsApp */}
+      {showGal ? (
+        <div className="sched-ov" onClick={() => setShowGal(false)}>
+          <div className="sched-modal gal-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="sm-head">
+              <span>Envoyer un média à {o.client}</span>
+              <button className="sm-x" onClick={() => setShowGal(false)} aria-label="Fermer"><i className="ti ti-x" aria-hidden="true" /></button>
+            </div>
+            <Galerie mode="envoi" waNum={waDigits(o.whatsapp, o.pays, o.telephone)} onClose={() => setShowGal(false)} />
+          </div>
+        </div>
+      ) : null}
 
       {/* Fenêtre de planification */}
       {modal ? (

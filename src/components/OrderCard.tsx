@@ -95,7 +95,7 @@ export default function OrderCard({
         <a href={telLink(o.telephone)}>
           <i className="ti ti-phone" aria-hidden="true" /> Appeler
         </a>
-        <a className="wa" href={waLink(o.whatsapp)} target="_blank" rel="noreferrer">
+        <a className="wa" href={waLink(o.whatsapp, undefined, o.pays, o.telephone)} target="_blank" rel="noreferrer">
           <i className="ti ti-brand-whatsapp" aria-hidden="true" /> WhatsApp
         </a>
       </div>

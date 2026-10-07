@@ -3,6 +3,7 @@ import { supabase, type Agent } from '../lib/supabase'
 import { changePassword } from '../lib/account'
 import { pushPrompt, pushPermission, pushSupported } from '../lib/onesignal'
 import Closeuses from './Closeuses'
+import Galerie from './Galerie'
 import Pays from './Pays'
 
 type Msg = { ok?: boolean; txt: string } | null
@@ -88,6 +89,12 @@ export default function Compte({ agent, onLogout }: { agent?: Agent | null; onLo
           {pwMsg ? <div className={pwMsg.ok ? 'acct-ok' : 'acct-err'}>{pwMsg.txt}</div> : null}
           <button type="submit" disabled={pwBusy}>{pwBusy ? 'Mise à jour…' : 'Mettre à jour'}</button>
         </form>
+      </section>
+
+      <section className="acct">
+        <div className="acct-t">Galerie photos / vidéos</div>
+        <div className="acct-hint">Ajoute une fois les médias de tes produits : toute l'équipe peut ensuite les envoyer aux clients par WhatsApp depuis la fiche commande.</div>
+        <Galerie mode="gestion" />
       </section>
 
       {pushSupported() ? (

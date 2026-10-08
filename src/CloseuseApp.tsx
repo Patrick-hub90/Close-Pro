@@ -4,6 +4,7 @@ import { CLOSEUSE, ORDERS, LIVRAISONS } from './data'
 import { useNow, matchFiltre, byUrgence, isLate, isWorkingNow } from './lib'
 import { supabase, type Agent } from './lib/supabase'
 import { mapDbOrder } from './lib/mapOrder'
+import { PAYS as PAYS_CFG } from './normalize'
 import OrderCard from './components/OrderCard'
 import CallMode from './components/CallMode'
 import MorningSas from './components/MorningSas'
@@ -20,11 +21,20 @@ const FILTRES: { id: FiltreId; label: string }[] = [
   { id: 'archivees', label: 'Archivées' },
 ]
 
-// Le « jour » et l'heure d'ouverture de la revue du matin sont calés sur le fuseau du Cameroun
-// (WAT = UTC+1, sans heure d'été) — pas sur l'horloge locale du téléphone, comme le moteur SLA serveur.
-const WAT_OFFSET_MS = 60 * 60 * 1000
-function heureWat(nowMs: number) { return new Date(nowMs + WAT_OFFSET_MS).getUTCHours() }
-function debutJourWat(nowMs: number) { const d = new Date(nowMs + WAT_OFFSET_MS); d.setUTCHours(0, 0, 0, 0); return d.getTime() - WAT_OFFSET_MS }
+// Le « jour » et l'heure d'ouverture de la revue du matin sont calés sur le fuseau du PAYS de la closeuse
+// (Cameroun = UTC+1, Sénégal = UTC+0…) — pas sur l'horloge locale du téléphone, comme le moteur SLA serveur.
+function decalageMs(fuseau: string, nowMs: number) {
+  try {
+    const p = new Intl.DateTimeFormat('en-US', { timeZone: fuseau, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' })
+      .formatToParts(new Date(nowMs)).reduce<Record<string, number>>((a, x) => { a[x.type] = Number(x.value); return a }, {})
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(nowMs / 60000) * 60000
+  } catch { return 60 * 60 * 1000 } // fuseau inconnu : WAT (UTC+1)
+}
+function heurePays(nowMs: number, fuseau: string) { return new Date(nowMs + decalageMs(fuseau, nowMs)).getUTCHours() }
+function debutJourPays(nowMs: number, fuseau: string) {
+  const off = decalageMs(fuseau, nowMs)
+  const d = new Date(nowMs + off); d.setUTCHours(0, 0, 0, 0); return d.getTime() - off
+}
 
 // Reports de livraison mémorisés côté client : ceinture de sécurité qui tient même si la colonne DB
 // livraison_prevue n'est pas migrée, et qui survit aux rechargements et au refetch périodique.
@@ -107,6 +117,7 @@ export default function CloseuseApp({
 
   const nom = (live && agent?.nom) || CLOSEUSE.nom
   const pays = (live && agent?.pays) || CLOSEUSE.pays
+  const fuseau = PAYS_CFG[pays]?.fuseau || 'Africa/Douala'
   const workingNow = isWorkingNow(agent?.horaires, now)
   const isOwner = !!(live && agent?.role === 'owner')
   const scoped = useMemo(() => (selectedPays ? orders.filter((o) => o.pays === selectedPays) : orders), [orders, selectedPays])
@@ -204,8 +215,8 @@ export default function CloseuseApp({
   }, [now, orders, live, workingNow, isOwner])
 
   // Revue de livraison du matin : commandes confirmées / en livraison AVANT aujourd'hui.
-  // Le « jour » de référence est celui du Cameroun (WAT), pas l'horloge locale du téléphone.
-  const startOfToday = useMemo(() => debutJourWat(now), [now])
+  // Le « jour » de référence est celui du pays de la closeuse, pas l'horloge locale du téléphone.
+  const startOfToday = useMemo(() => debutJourPays(now, fuseau), [now, fuseau])
   // N'apparaissent que les commandes confirmées AVANT aujourd'hui (jamais le jour même), pas encore
   // clôturées, et dont la re-livraison éventuelle (colonne DB OU report mémorisé localement) est échue.
   const sasOrders = live
@@ -217,7 +228,7 @@ export default function CloseuseApp({
   // Verrou de la revue du matin : dès 6h (heure Cameroun) et tant qu'il reste des livraisons à
   // clôturer, l'onglet Appels est BLOQUÉ — quel que soit le filtre — et aucun appel ne peut être lancé.
   // Réservé aux CLOSEUSES : le propriétaire (supervision) n'est jamais bloqué par cet écran.
-  const sasLock = live && !isOwner && tab === 'appels' && heureWat(now) >= 6 && sasOrders.length > 0
+  const sasLock = live && !isOwner && tab === 'appels' && heurePays(now, fuseau) >= 6 && sasOrders.length > 0
   // Le verrou est prioritaire : s'il s'arme pendant un appel déjà ouvert (passage de 6h, ou
   // livraisons de la veille chargées par le refetch), on ferme l'appel pour imposer la revue.
   useEffect(() => { if (sasLock && call) setCall(null) }, [sasLock, call])

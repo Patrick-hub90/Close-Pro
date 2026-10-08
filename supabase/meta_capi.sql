@@ -16,6 +16,7 @@ insert into app_config (key, value) values
   ('meta_capi_token_CM', 'COLLER_VOTRE_JETON_CAPI'),    -- Gestionnaire d'événements > pixel > Paramètres > API Conversions > Générer un jeton
   ('meta_event_name',    'CommandeLivree'),             -- nom de l'événement envoyé à la livraison
   ('meta_currency',      'XAF'),                        -- devise par défaut : FCFA (Afrique centrale)
+  ('meta_pixel_id_SN',   '783917907877789'),            -- Sénégal : même pixel Noshop_2025 (jeton SN = copie du jeton CM)
   ('meta_currency_SN',   'XOF'),                        -- devise propre à un pays (prioritaire) : FCFA (Afrique de l'Ouest)
   ('meta_test_event_code', '')                          -- facultatif : code de l'onglet « Tester les événements »
 on conflict (key) do nothing;
@@ -55,7 +56,8 @@ begin
     'user_data',     ud,
     'custom_data',   jsonb_build_object(
                        'currency', cur, 'value', coalesce(o.total, 0), 'order_id', o.numero,
-                       'content_name', o.produit_nom, 'content_type', 'product', 'num_items', coalesce(o.quantite, 1))
+                       'content_name', o.produit_nom, 'content_type', 'product', 'num_items', coalesce(o.quantite, 1),
+                       'pays', o.pays)  -- permet une conversion personnalisée par pays (même pixel)
   )));
   if testc is not null then body := body || jsonb_build_object('test_event_code', testc); end if;
   return body;

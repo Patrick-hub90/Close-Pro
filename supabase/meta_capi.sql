@@ -15,7 +15,8 @@ insert into app_config (key, value) values
   ('meta_pixel_id_CM',   '783917907877789'),            -- pixel « Noshop_2025 » (boutique Noshop_CAM)
   ('meta_capi_token_CM', 'COLLER_VOTRE_JETON_CAPI'),    -- Gestionnaire d'événements > pixel > Paramètres > API Conversions > Générer un jeton
   ('meta_event_name',    'CommandeLivree'),             -- nom de l'événement envoyé à la livraison
-  ('meta_currency',      'XAF'),                        -- FCFA (Afrique centrale)
+  ('meta_currency',      'XAF'),                        -- devise par défaut : FCFA (Afrique centrale)
+  ('meta_currency_SN',   'XOF'),                        -- devise propre à un pays (prioritaire) : FCFA (Afrique de l'Ouest)
   ('meta_test_event_code', '')                          -- facultatif : code de l'onglet « Tester les événements »
 on conflict (key) do nothing;
 
@@ -25,7 +26,10 @@ create or replace function meta_capi_body(o public.orders) returns jsonb
 declare evname text; cur text; testc text; tel text; parts text[]; prenom text; nom text; ud jsonb; body jsonb;
 begin
   select coalesce(nullif(value, ''), 'CommandeLivree') into evname from app_config where key = 'meta_event_name';
-  select coalesce(nullif(value, ''), 'XAF') into cur from app_config where key = 'meta_currency';
+  select coalesce(
+    (select nullif(value, '') from app_config where key = 'meta_currency_' || coalesce(o.pays, '')),
+    (select nullif(value, '') from app_config where key = 'meta_currency'),
+    'XAF') into cur;
   select nullif(value, '') into testc from app_config where key = 'meta_test_event_code';
   evname := coalesce(evname, 'CommandeLivree'); cur := coalesce(cur, 'XAF');
 

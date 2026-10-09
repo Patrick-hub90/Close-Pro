@@ -25,6 +25,7 @@ on conflict (key) do nothing;
 create or replace function meta_capi_body(o public.orders) returns jsonb
   language plpgsql stable security definer set search_path = public, extensions as $$
 declare evname text; cur text; testc text; tel text; parts text[]; prenom text; nom text; ud jsonb; body jsonb;
+        att record; src text := 'system_generated'; ev jsonb;
 begin
   select coalesce(nullif(value, ''), 'CommandeLivree') into evname from app_config where key = 'meta_event_name';
   select coalesce(
@@ -48,17 +49,31 @@ begin
   if prenom is not null then ud := ud || jsonb_build_object('fn', jsonb_build_array(encode(sha256(convert_to(prenom, 'UTF8')), 'hex'))); end if;
   if nom    is not null then ud := ud || jsonb_build_object('ln', jsonb_build_array(encode(sha256(convert_to(nom,    'UTF8')), 'hex'))); end if;
 
-  body := jsonb_build_object('data', jsonb_build_array(jsonb_build_object(
+  -- Attribution publicitaire (webhook Shopify, voir shopify_attribution.sql) : clic Meta (fbc) + IP.
+  -- Avec ces données, la livraison part comme un événement « site web » relié à la pub cliquée.
+  select * into att from shopify_attributions a where a.pays = o.pays and a.numero = o.numero;
+  if found then
+    if att.fbclid is not null then
+      ud := ud || jsonb_build_object('fbc', 'fb.1.' ||
+        (extract(epoch from coalesce(att.commande_at, o.date_commande, o.created_at)) * 1000)::bigint || '.' || att.fbclid);
+    end if;
+    if att.ip is not null then ud := ud || jsonb_build_object('client_ip_address', att.ip); end if;
+    if att.user_agent is not null then ud := ud || jsonb_build_object('client_user_agent', att.user_agent); end if;
+    if att.url is not null and (att.fbclid is not null or att.ip is not null) then src := 'website'; end if;
+  end if;
+
+  ev := jsonb_build_object(
     'event_name',    evname,
     'event_time',    extract(epoch from coalesce(o.livre_at, now()))::bigint,
     'event_id',      'livre-' || o.id,                -- identifiant unique : Meta ignore les doublons
-    'action_source', 'system_generated',
+    'action_source', src,
     'user_data',     ud,
     'custom_data',   jsonb_build_object(
                        'currency', cur, 'value', coalesce(o.total, 0), 'order_id', o.numero,
                        'content_name', o.produit_nom, 'content_type', 'product', 'num_items', coalesce(o.quantite, 1),
-                       'pays', o.pays)  -- permet une conversion personnalisée par pays (même pixel)
-  )));
+                       'pays', o.pays));  -- permet une conversion personnalisée par pays (même pixel)
+  if src = 'website' then ev := ev || jsonb_build_object('event_source_url', att.url); end if;
+  body := jsonb_build_object('data', jsonb_build_array(ev));
   if testc is not null then body := body || jsonb_build_object('test_event_code', testc); end if;
   return body;
 end $$;

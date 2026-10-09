@@ -1,12 +1,12 @@
 -- ============================================================
 -- Close-Pro — Envoi des commandes LIVRÉES au pixel Meta (API Conversions, côté serveur).
--- Dès qu'une commande passe au statut « livre » (écran d'appel, revue du matin, sélection
+-- Quand une commande est « livre » depuis 2 h (écran d'appel, revue du matin, sélection
 -- multiple…), un événement part vers le pixel du pays de la commande.
 --
 -- Pas de double comptage : le formulaire EasySell/Shopify envoie déjà « Purchase » à la commande ;
 -- la livraison part sous un événement DISTINCT (par défaut « CommandeLivree »).
 -- Données client hachées en SHA-256 (téléphone, prénom, nom, pays), comme l'exige Meta.
--- L'envoi ne bloque JAMAIS la clôture : en cas d'erreur, la commande passe quand même « Livré ».
+-- L'envoi ne bloque JAMAIS la clôture : il est fait à part, par une tâche planifiée.
 -- Idempotent : peut être ré-exécuté.
 -- ============================================================
 
@@ -64,32 +64,65 @@ begin
 end $$;
 revoke execute on function meta_capi_body(public.orders) from public;
 
--- 3) Envoi automatique au passage « livre » (asynchrone via pg_net, ne bloque jamais la mise à jour)
-create or replace function meta_capi_livraison() returns trigger
-  language plpgsql security definer set search_path = public, extensions as $$
-declare px text; tok text;
+-- 3) Envoi DIFFÉRÉ : une livraison ne part au pixel que si la commande est restée « livre » pendant
+--    meta_delai_minutes (120 par défaut). Une erreur de clic corrigée dans ce délai (Livré -> Annulé…)
+--    n'est donc jamais envoyée — Meta ne permet pas de retirer un événement déjà reçu.
+--    event_time = livre_at (heure réelle de la livraison) ; Meta accepte jusqu'à 7 jours de retard.
+--    Tâche pg_cron toutes les 5 minutes, asynchrone (pg_net) : ne bloque jamais l'appli.
+insert into app_config (key, value) values ('meta_delai_minutes', '120') on conflict (key) do nothing;
+
+-- Moment où la commande a été MARQUÉE « livre » (horloge serveur). livre_at peut être antidaté
+-- (revue du matin) : le délai de sécurité part donc du clic, pas de la date de livraison.
+alter table orders add column if not exists livre_marque_at timestamptz;
+create or replace function orders_livre_marque() returns trigger language plpgsql as $$
 begin
-  begin
-    select value into px  from app_config where key = 'meta_pixel_id_'   || coalesce(new.pays, '');
-    select value into tok from app_config where key = 'meta_capi_token_' || coalesce(new.pays, '');
-    if px is null or px = '' or px like 'COLLER%' or tok is null or tok = '' or tok like 'COLLER%' then return new; end if;
-    perform net.http_post(
-      url := 'https://graph.facebook.com/v21.0/' || px || '/events?access_token=' || tok,
-      headers := '{"Content-Type":"application/json"}'::jsonb,
-      body := meta_capi_body(new));
-    insert into events (order_id, type, severite, canal_notif, destinataire, notifie, envoye_at, payload)
-    values (new.id, 'meta_capi', 'info', 'meta', 'pixel', true, now(), jsonb_build_object('pixel', px));
-  exception when others then
-    raise warning 'meta_capi_livraison (%): %', new.numero, sqlerrm;  -- la livraison est quand même enregistrée
-  end;
+  if new.statut = 'livre' and (tg_op = 'INSERT' or old.statut is distinct from 'livre') then
+    new.livre_marque_at := now();
+  end if;
   return new;
 end $$;
+drop trigger if exists trg_orders_livre_marque on orders;
+create trigger trg_orders_livre_marque before insert or update of statut on orders
+  for each row execute function orders_livre_marque();
 
-drop trigger if exists trg_meta_capi_livraison on orders;
-create trigger trg_meta_capi_livraison
-  after update of statut on orders
-  for each row when (new.statut = 'livre' and old.statut is distinct from 'livre')
-  execute function meta_capi_livraison();
+drop trigger if exists trg_meta_capi_livraison on orders;   -- ancien envoi immédiat (remplacé)
+
+create or replace function meta_capi_envoyer_en_attente() returns int
+  language plpgsql security definer set search_path = public, extensions as $$
+declare r record; px text; tok text; delai int; n int := 0;
+begin
+  select coalesce(nullif(value, '')::int, 120) into delai from app_config where key = 'meta_delai_minutes';
+  delai := coalesce(delai, 120);
+  for r in
+    select o.* from orders o
+    where o.statut = 'livre'
+      and coalesce(o.livre_marque_at, o.livre_at) <= now() - make_interval(mins => delai)
+      and coalesce(o.livre_at, o.livre_marque_at) > now() - interval '6 days'   -- Meta refuse > 7 jours
+      and not exists (select 1 from events e where e.order_id = o.id and e.type = 'meta_capi')
+    order by coalesce(o.livre_marque_at, o.livre_at)
+    limit 50
+  loop
+    begin
+      select value into px  from app_config where key = 'meta_pixel_id_'   || coalesce(r.pays, '');
+      select value into tok from app_config where key = 'meta_capi_token_' || coalesce(r.pays, '');
+      continue when px is null or px = '' or px like 'COLLER%' or tok is null or tok = '' or tok like 'COLLER%';
+      perform net.http_post(
+        url := 'https://graph.facebook.com/v21.0/' || px || '/events?access_token=' || tok,
+        headers := '{"Content-Type":"application/json"}'::jsonb,
+        body := meta_capi_body(r::public.orders));
+      insert into events (order_id, type, severite, canal_notif, destinataire, notifie, envoye_at, payload)
+      values (r.id, 'meta_capi', 'info', 'meta', 'pixel', true, now(), jsonb_build_object('pixel', px));
+      n := n + 1;
+    exception when others then
+      raise warning 'meta_capi_envoyer_en_attente (%): %', r.numero, sqlerrm;
+    end;
+  end loop;
+  return n;
+end $$;
+revoke execute on function meta_capi_envoyer_en_attente() from public;
+
+select cron.unschedule(jobid) from cron.job where jobname = 'meta-capi-livraisons';
+select cron.schedule('meta-capi-livraisons', '*/5 * * * *', 'select meta_capi_envoyer_en_attente()');
 
 -- 4) Diagnostic : envoie (SYNCHRONE) l'événement d'une commande et renvoie la réponse exacte de Meta.
 --    select cz_diag_meta('1009');   -> {"events_received":1,...} = OK

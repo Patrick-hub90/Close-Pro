@@ -104,7 +104,7 @@ drop trigger if exists trg_meta_capi_livraison on orders;   -- ancien envoi imm√
 
 create or replace function meta_capi_envoyer_en_attente() returns int
   language plpgsql security definer set search_path = public, extensions as $$
-declare r record; px text; tok text; delai int; n int := 0;
+declare r public.orders; px text; tok text; delai int; n int := 0;
 begin
   select coalesce(nullif(value, '')::int, 120) into delai from app_config where key = 'meta_delai_minutes';
   delai := coalesce(delai, 120);
@@ -124,7 +124,7 @@ begin
       perform net.http_post(
         url := 'https://graph.facebook.com/v21.0/' || px || '/events?access_token=' || tok,
         headers := '{"Content-Type":"application/json"}'::jsonb,
-        body := meta_capi_body(r::public.orders));
+        body := meta_capi_body(r));
       insert into events (order_id, type, severite, canal_notif, destinataire, notifie, envoye_at, payload)
       values (r.id, 'meta_capi', 'info', 'meta', 'pixel', true, now(), jsonb_build_object('pixel', px));
       n := n + 1;

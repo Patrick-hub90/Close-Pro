@@ -37,14 +37,18 @@ Deno.serve(async (req) => {
   try { o = await req.json() } catch { return new Response('bad json', { status: 400 }) }
 
   const boutique = (req.headers.get('x-shopify-shop-domain') || '').toLowerCase()
-  const pays = await config('shopify_pays_' + boutique)
   const numero = String(o.name ?? o.order_number ?? '').replace(/\D/g, '')
-  if (!pays || !numero) return new Response('ignored') // boutique inconnue : rien à faire
 
   const attrs: Record<string, string> = {}
   for (const a of (o.note_attributes ?? []) as { name?: string; value?: string }[]) {
     if (a?.name) attrs[a.name] = String(a.value ?? '')
   }
+
+  // Pays : boutique connue, sinon le pays saisi dans le formulaire EasySell (attribut « country »).
+  const paysForm = /^[A-Z]{2}$/.test((attrs['country'] || '').toUpperCase()) ? attrs['country'].toUpperCase() : null
+  const pays = (await config('shopify_pays_' + boutique)) || paysForm
+  console.log('webhook', JSON.stringify({ boutique, name: o.name, numero, pays, topic: req.headers.get('x-shopify-topic') }))
+  if (!pays || !numero) return new Response('ignored') // impossible de rattacher la commande
 
   const fullUrl = attrs['full_url'] || (o.landing_site ? `https://${boutique}${o.landing_site}` : '')
   let fbclid: string | null = null, adId: string | null = null, url: string | null = null

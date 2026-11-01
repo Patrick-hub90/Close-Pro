@@ -4,10 +4,11 @@
   l'appli des closeuses. Le prix affiché n'est qu'indicatif : le serveur relit le vrai prix.
   Les heures d'appel et le numéro de contact viennent de la fonction (réglages app_config), pas du thème.
   Usage dans un bloc « Liquid personnalisé » de la page produit : {% render 'noshop-cod-form', product: product %}
+  (Cameroun : ajouter `pays: 'CM'`).
 {%- endcomment -%}
 {%- assign prix = product.selected_or_first_available_variant.price -%}
-{%- comment -%} Pays de la boutique d'après sa devise : XAF = Cameroun, sinon Sénégal. {%- endcomment -%}
-{%- if shop.currency == 'XAF' -%}{%- assign pays = 'CM' -%}{%- else -%}{%- assign pays = 'SN' -%}{%- endif -%}
+{%- comment -%} Pays du formulaire donné par la page (paramètre pays), Sénégal par défaut. {%- endcomment -%}
+{%- assign pays = pays | default: 'SN' -%}
 <div class="ncf ncf--{{ pays | downcase }}" id="ncf-{{ product.id }}"
      data-shop="{{ shop.permanent_domain }}" data-handle="{{ product.handle }}" data-pays="{{ pays }}"
      data-prix="{{ prix | divided_by: 100 }}" data-devise="{{ cart.currency.iso_code }}">

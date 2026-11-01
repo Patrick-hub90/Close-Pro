@@ -50,25 +50,94 @@ async function sha256(v: string) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+// Appli Shopify (Dev Dashboard) installée sur la boutique : identifiants en secrets Supabase
+// `<PREFIXE>_CLIENT_ID` / `<PREFIXE>_CLIENT_SECRET`. Sans eux, la commande n'existe que dans Close-Pro.
+const APPLI_SHOPIFY: Record<string, string> = { 'utauxp-w2.myshopify.com': 'SHOPIFY_SENE' }
+const jetons = new Map<string, { jeton: string; expire: number }>()
+
+/** Jeton Admin API obtenu par « client credentials » (valable ~24 h, gardé en mémoire). */
+async function jetonShopify(shop: string): Promise<string | null> {
+  const prefixe = APPLI_SHOPIFY[shop]
+  const id = prefixe && Deno.env.get(prefixe + '_CLIENT_ID')
+  const secret = prefixe && Deno.env.get(prefixe + '_CLIENT_SECRET')
+  if (!id || !secret) return null
+  const enCache = jetons.get(shop)
+  if (enCache && enCache.expire > Date.now() + 60_000) return enCache.jeton
+  const r = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ client_id: id, client_secret: secret, grant_type: 'client_credentials' }),
+  })
+  if (!r.ok) { console.error('jeton shopify', shop, r.status, (await r.text()).slice(0, 200)); return null }
+  const j = await r.json() as { access_token: string; expires_in?: number }
+  jetons.set(shop, { jeton: j.access_token, expire: Date.now() + (j.expires_in ?? 3600) * 1000 })
+  return j.access_token
+}
+
+async function adminShopify(shop: string, query: string, variables: Record<string, unknown>) {
+  const jeton = await jetonShopify(shop)
+  if (!jeton) return null
+  const r = await fetch(`https://${shop}/admin/api/2026-10/graphql.json`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'X-Shopify-Access-Token': jeton },
+    body: JSON.stringify({ query, variables }),
+  })
+  const j = await r.json() as { data?: any; errors?: unknown }
+  if (!r.ok || j.errors) { console.error('admin shopify', shop, r.status, JSON.stringify(j.errors ?? '').slice(0, 300)); return null }
+  return j.data
+}
+
+/** Crée la commande « paiement à la livraison » (paiement en attente) dans Shopify, même numéro que Close-Pro. */
+async function commandeShopify(shop: string, o: {
+  numero: string; variante: string; quantite: number; prix: number; nom: string; e164: string
+  adresse: string; ville: string | null; pays: string; test: boolean
+}) {
+  const [prenom, ...reste] = o.nom.split(/\s+/)
+  const data = await adminShopify(shop, `mutation($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+      orderCreate(order: $order, options: $options) { order { id name } userErrors { field message } } }`, {
+    order: {
+      name: '#' + o.numero,
+      currency: 'XOF',
+      financialStatus: 'PENDING',
+      phone: o.e164,
+      test: o.test,
+      lineItems: [{ variantId: o.variante, quantity: o.quantite, priceSet: { shopMoney: { amount: String(o.prix), currencyCode: 'XOF' } } }],
+      shippingAddress: { firstName: prenom, lastName: reste.join(' ') || prenom, address1: o.adresse, city: o.ville || '', countryCode: o.pays, phone: o.e164 },
+      note: 'Formulaire Noshop – commande Close-Pro n° ' + o.numero,
+      tags: ['formulaire-cod', 'close-pro'],
+      sourceName: 'noshop-formulaire',
+    },
+    options: { sendReceipt: false, sendFulfillmentReceipt: false, inventoryBehaviour: 'BYPASS' },
+  })
+  const res = data?.orderCreate
+  if (!res || res.userErrors?.length) { console.error('orderCreate', o.numero, JSON.stringify(res?.userErrors ?? 'pas de réponse')); return null }
+  return res.order as { id: string; name: string }
+}
+
 /**
- * Prix réel du produit : lu sur la boutique (endpoint public /products/<handle>.js, prix en centimes),
- * sinon dans le catalogue app_config `cod_catalogue_<domaine>` ({handle: {titre, prix}}) — utile quand la
- * boutique est protégée par mot de passe. Jamais le prix envoyé par le navigateur.
+ * Prix réel du produit : lu dans l'admin Shopify (si l'appli est installée), sinon sur la boutique
+ * (endpoint public /products/<handle>.js, prix en centimes), sinon dans le catalogue app_config
+ * `cod_catalogue_<domaine>` ({handle: {titre, prix}}). Jamais le prix envoyé par le navigateur.
  */
 async function produitBoutique(shop: string, handle: string) {
+  const admin = await adminShopify(shop, `query($h: String!) { productByIdentifier(identifier: { handle: $h }) {
+      title variants(first: 1) { nodes { id price } } } }`, { h: handle })
+  const pa = admin?.productByIdentifier
+  if (pa?.variants?.nodes?.[0]) {
+    const v = pa.variants.nodes[0]
+    return { titre: pa.title as string, variante: v.id as string | null, prix: Math.round(Number(v.price)) }
+  }
   try {
     const r = await fetch(`https://${shop}/products/${encodeURIComponent(handle)}.js`)
     if (r.ok) {
       const p = await r.json() as { title: string; variants: { id: number; price: number }[] }
       const v = p.variants?.[0]
-      if (v) return { titre: p.title, variante: v.id as number | null, prix: Math.round(v.price / 100) }
+      if (v) return { titre: p.title, variante: ('gid://shopify/ProductVariant/' + v.id) as string | null, prix: Math.round(v.price / 100) }
     }
   } catch { /* boutique injoignable : catalogue */ }
   const cat = await config('cod_catalogue_' + shop)
   if (!cat) return null
   try {
-    const p = (JSON.parse(cat) as Record<string, { titre: string; prix: number }>)[handle]
-    return p ? { titre: p.titre, variante: null, prix: Math.round(p.prix) } : null
+    const p = (JSON.parse(cat) as Record<string, { titre: string; prix: number; variante?: string }>)[handle]
+    return p ? { titre: p.titre, variante: p.variante ?? null, prix: Math.round(p.prix) } : null
   } catch { return null }
 }
 
@@ -131,6 +200,11 @@ Deno.serve(async (req) => {
   if (!adresse) return json({ ok: false, erreur: 'Indiquez votre quartier ou votre adresse.' }, 422)
   if (!handle) return json({ ok: false, erreur: 'Produit manquant.' }, 422)
 
+  // Commande de test (clé app_config `cod_cle_test`) : annulée d'office dans Close-Pro, marquée « test »
+  // dans Shopify et jamais envoyée à Meta.
+  const cleTest = await config('cod_cle_test')
+  const test = !!cleTest && b.test === cleTest
+
   const produit = await produitBoutique(shop, handle)
   if (!produit) return json({ ok: false, erreur: 'Produit introuvable.' }, 422)
   const total = produit.prix * quantite
@@ -162,7 +236,8 @@ Deno.serve(async (req) => {
     produit_nom: produit.titre, quantite, prix_unitaire: produit.prix, total,
     nom_complet: nom, telephone: court(b.telephone, 40), telephone_e164: e164,
     whatsapp: e164.replace(/\D/g, ''), adresse, region: ville,
-    statut: 'a_appeler', is_backfill: false,
+    statut: test ? 'annule' : 'a_appeler', is_backfill: false,
+    dernier_commentaire: test ? 'TEST formulaire (à ignorer)' : null,
     appel_deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(), appel_deadline_type: 'nouvelle_10min',
     date_commande: maintenant,
     extra: { boutique: shop, handle, variante: produit.variante, note: court(b.note, 300) },
@@ -173,12 +248,28 @@ Deno.serve(async (req) => {
     pays, numero, fbclid, ad_id: adId, ip, user_agent: ua, url, commande_at: maintenant, updated_at: maintenant,
   }, { onConflict: 'pays,numero' })
 
-  const fbc = court(b.fbc, 300) || (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null)
-  const eventId = court(b.event_id, 100) || 'achat-' + numero
-  try {
-    await envoyerAchatMeta({ pays, numero, total, e164, nom, eventId, url: url || fullUrl, ip, ua, fbc, fbp: court(b.fbp, 300), handle })
-  } catch (e) { console.error('capi', numero, String(e)) }
+  let shopifyCommande: { id: string; name: string } | null = null
+  if (produit.variante) {
+    try {
+      shopifyCommande = await commandeShopify(shop, {
+        numero, variante: produit.variante, quantite, prix: produit.prix, nom, e164, adresse, ville, pays, test,
+      })
+      if (shopifyCommande) {
+        await db.from('orders').update({
+          extra: { boutique: shop, handle, variante: produit.variante, note: court(b.note, 300), shopify_id: shopifyCommande.id, shopify_nom: shopifyCommande.name },
+        }).eq('pays', pays).eq('numero', numero)
+      }
+    } catch (e) { console.error('shopify', numero, String(e)) }
+  }
 
-  console.log('commande', JSON.stringify({ shop, pays, numero, handle, quantite, total }))
-  return json({ ok: true, numero, total })
+  if (!test) {
+    const fbc = court(b.fbc, 300) || (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null)
+    const eventId = court(b.event_id, 100) || 'achat-' + numero
+    try {
+      await envoyerAchatMeta({ pays, numero, total, e164, nom, eventId, url: url || fullUrl, ip, ua, fbc, fbp: court(b.fbp, 300), handle })
+    } catch (e) { console.error('capi', numero, String(e)) }
+  }
+
+  console.log('commande', JSON.stringify({ shop, pays, numero, handle, quantite, total, test, shopify: shopifyCommande?.name ?? null }))
+  return json({ ok: true, numero, total, shopify: !!shopifyCommande })
 })

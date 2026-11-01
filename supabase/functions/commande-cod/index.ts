@@ -270,8 +270,7 @@ Deno.serve(async (req) => {
     nom_complet: nom, telephone: court(b.telephone, 40), telephone_e164: e164,
     whatsapp: e164.replace(/\D/g, ''), adresse, region: ville,
     statut: test ? 'annule' : 'a_appeler', is_backfill: false,
-    dernier_commentaire: test ? 'TEST formulaire (à ignorer)'
-      : [horsDakar ? '🚚 Hors Dakar : paiement avant expédition (client prévenu sur le formulaire)' : null, alerte].filter(Boolean).join(' · ') || null,
+    dernier_commentaire: test ? 'TEST formulaire (à ignorer)' : alerte,
     appel_deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(), appel_deadline_type: 'nouvelle_10min',
     date_commande: maintenant,
     extra: { boutique: shop, handle, variante: produit.variante, note: court(b.note, 300) },

@@ -1,0 +1,17 @@
+{%- comment -%}
+  Pixel Meta Noshop_2025 : PageView sur toutes les pages, ViewContent sur les fiches produit.
+  L'achat (Purchase) est envoyé par le formulaire noshop-cod-form, avec le même event_id que l'envoi
+  serveur (Edge Function commande-cod) pour que Meta ne le compte qu'une fois.
+{%- endcomment -%}
+<script>
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+  n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+  n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+  t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
+  document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  fbq('init', '783917907877789');
+  fbq('track', 'PageView');
+  {%- if template.name == 'product' %}
+  fbq('track', 'ViewContent', { content_ids: [{{ product.handle | json }}], content_type: 'product', value: {{ product.price | divided_by: 100 }}, currency: {{ cart.currency.iso_code | json }} });
+  {%- endif %}
+</script>

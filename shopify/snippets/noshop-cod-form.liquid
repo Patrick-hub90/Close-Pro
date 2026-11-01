@@ -1,0 +1,152 @@
+{%- comment -%}
+  Formulaire de commande « paiement à la livraison » (remplace EasySell).
+  Envoie la commande à l'Edge Function Close-Pro `commande-cod` : la commande arrive directement dans
+  l'appli des closeuses. Le prix affiché n'est qu'indicatif : le serveur relit le vrai prix.
+  Usage dans un bloc « Liquid personnalisé » de la page produit : {% render 'noshop-cod-form', product: product %}
+{%- endcomment -%}
+{%- assign prix = product.selected_or_first_available_variant.price -%}
+<div class="ncf" id="ncf-{{ product.id }}"
+     data-shop="{{ shop.permanent_domain }}" data-handle="{{ product.handle }}"
+     data-prix="{{ prix | divided_by: 100 }}" data-devise="{{ cart.currency.iso_code }}">
+  <form class="ncf__form" novalidate>
+    <p class="ncf__titre">Commandez maintenant<br><span>Vous payez seulement à la livraison</span></p>
+
+    <label class="ncf__champ">
+      <span>Nom complet</span>
+      <input name="nom" type="text" autocomplete="name" placeholder="Ex : Moussa Diop" required>
+    </label>
+    <label class="ncf__champ">
+      <span>Téléphone (WhatsApp de préférence)</span>
+      <input name="telephone" type="tel" inputmode="tel" autocomplete="tel" placeholder="77 123 45 67" required>
+    </label>
+    <label class="ncf__champ">
+      <span>Ville</span>
+      <select name="ville">
+        <option>Dakar</option><option>Pikine</option><option>Guédiawaye</option><option>Rufisque</option>
+        <option>Keur Massar</option><option>Thiès</option><option>Mbour</option><option>Autre ville</option>
+      </select>
+    </label>
+    <label class="ncf__champ">
+      <span>Quartier et adresse de livraison</span>
+      <input name="adresse" type="text" autocomplete="street-address" placeholder="Ex : Liberté 6, près de la pharmacie" required>
+    </label>
+
+    <div class="ncf__qte">
+      <span>Quantité</span>
+      <div class="ncf__stepper">
+        <button type="button" data-q="-1" aria-label="Moins">−</button>
+        <output name="quantite">1</output>
+        <button type="button" data-q="1" aria-label="Plus">+</button>
+      </div>
+    </div>
+
+    <div class="ncf__total"><span>Total à payer à la livraison</span><strong data-total></strong></div>
+    <p class="ncf__erreur" role="alert" hidden></p>
+    <button class="ncf__bouton" type="submit">Je commande – paiement à la livraison</button>
+    <p class="ncf__rassure">📦 Colis discret · 💵 Aucun paiement en ligne · 📞 Un conseiller vous appelle pour confirmer</p>
+  </form>
+
+  <div class="ncf__merci" hidden>
+    <p class="ncf__merci-titre">✅ Commande reçue !</p>
+    <p>Commande n° <strong data-numero></strong>. Un conseiller va vous appeler très vite pour confirmer la livraison.</p>
+    <p>Gardez votre téléphone à portée de main 📞</p>
+  </div>
+</div>
+
+<style>
+  .ncf{margin:12px 0;padding:18px;border:2px solid #f83a3a;border-radius:16px;background:#fff}
+  .ncf__titre{margin:0 0 14px;font-weight:700;font-size:1.15em;text-align:center;line-height:1.3}
+  .ncf__titre span{font-weight:500;font-size:.85em;color:#00a341}
+  .ncf__champ{display:block;margin-bottom:12px}
+  .ncf__champ span{display:block;font-size:.85em;font-weight:600;margin-bottom:4px}
+  .ncf__champ input,.ncf__champ select{width:100%;padding:12px 14px;border:1px solid #cfcfcf;border-radius:10px;font-size:16px;background:#fff}
+  .ncf__champ input:focus,.ncf__champ select:focus{outline:none;border-color:#1a1a1a}
+  .ncf__qte,.ncf__total{display:flex;align-items:center;justify-content:space-between;margin:10px 0}
+  .ncf__stepper{display:flex;align-items:center;gap:14px}
+  .ncf__stepper button{width:38px;height:38px;border-radius:50%;border:1px solid #cfcfcf;background:#f0f0f0;font-size:20px;line-height:1;cursor:pointer}
+  .ncf__total{padding:12px 14px;background:#f0f0f0;border-radius:10px}
+  .ncf__total strong{font-size:1.25em}
+  .ncf__erreur{color:#f83a3a;font-weight:600;margin:8px 0}
+  .ncf__bouton{width:100%;padding:16px;border:0;border-radius:12px;background:#f83a3a;color:#fff;font-size:17px;font-weight:700;cursor:pointer;animation:ncf-pulse 2s infinite}
+  .ncf__bouton[disabled]{opacity:.6;animation:none;cursor:wait}
+  .ncf__rassure{font-size:.8em;text-align:center;margin:10px 0 0;color:#555}
+  .ncf__merci{text-align:center;padding:10px}
+  .ncf__merci-titre{font-size:1.3em;font-weight:700;color:#00a341;margin:0 0 8px}
+  @keyframes ncf-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.02)}}
+</style>
+
+<script>
+  (function () {
+    var racine = document.getElementById('ncf-{{ product.id }}');
+    if (!racine || racine.dataset.pret) return;
+    racine.dataset.pret = '1';
+    var FONCTION = 'https://mhbykrhuzvwvwvbqfqwn.supabase.co/functions/v1/commande-cod';
+    var form = racine.querySelector('form');
+    var sortieQte = form.querySelector('output[name=quantite]');
+    var totalEl = racine.querySelector('[data-total]');
+    var erreurEl = racine.querySelector('.ncf__erreur');
+    var bouton = form.querySelector('.ncf__bouton');
+    var prix = Number(racine.dataset.prix) || 0;
+    var devise = racine.dataset.devise || 'XOF';
+    var qte = 1, debutSaisie = false;
+
+    // Garde l'URL d'arrivée (avec fbclid / utm de la pub) pour la durée de la visite.
+    try {
+      if (/fbclid=|utm_/.test(location.search)) sessionStorage.setItem('ncf_arrivee', location.href);
+    } catch (e) {}
+
+    function fcfa(n) { return n.toLocaleString('fr-FR').replace(/ | /g, ' ') + ' FCFA'; }
+    function majTotal() { sortieQte.textContent = qte; totalEl.textContent = fcfa(prix * qte); }
+    function cookie(nom) { var m = document.cookie.match('(?:^|; )' + nom + '=([^;]*)'); return m ? decodeURIComponent(m[1]) : ''; }
+    majTotal();
+
+    racine.querySelectorAll('[data-q]').forEach(function (b) {
+      b.addEventListener('click', function () { qte = Math.min(5, Math.max(1, qte + Number(b.dataset.q))); majTotal(); });
+    });
+    form.addEventListener('focusin', function () {
+      if (debutSaisie) return;
+      debutSaisie = true;
+      if (window.fbq) fbq('track', 'InitiateCheckout', { value: prix, currency: devise, content_ids: [racine.dataset.handle], content_type: 'product' });
+    });
+
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      erreurEl.hidden = true;
+      var d = new FormData(form);
+      var nom = String(d.get('nom') || '').trim(), tel = String(d.get('telephone') || '').trim(), adr = String(d.get('adresse') || '').trim();
+      if (nom.length < 2) return montrerErreur('Indiquez votre nom.');
+      if (tel.replace(/\D/g, '').length < 9) return montrerErreur('Indiquez un numéro de téléphone valide.');
+      if (!adr) return montrerErreur('Indiquez votre quartier ou votre adresse.');
+
+      var eventId = 'achat-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      var arrivee = '';
+      try { arrivee = sessionStorage.getItem('ncf_arrivee') || ''; } catch (e) {}
+      bouton.disabled = true;
+      bouton.textContent = 'Envoi en cours…';
+
+      fetch(FONCTION, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          shop: racine.dataset.shop, handle: racine.dataset.handle, quantite: qte,
+          nom: nom, telephone: tel, ville: d.get('ville'), adresse: adr,
+          full_url: arrivee || location.href, fbp: cookie('_fbp'), fbc: cookie('_fbc'), event_id: eventId
+        })
+      }).then(function (r) { return r.json(); }).then(function (rep) {
+        if (!rep.ok) throw new Error(rep.erreur || 'Erreur, réessayez.');
+        if (window.fbq && !rep.doublon) fbq('track', 'Purchase', { value: rep.total, currency: devise, content_ids: [racine.dataset.handle], content_type: 'product' }, { eventID: eventId });
+        racine.querySelector('[data-numero]').textContent = rep.numero;
+        form.hidden = true;
+        racine.querySelector('.ncf__merci').hidden = false;
+        racine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }).catch(function (e) {
+        montrerErreur(e.message || 'Connexion impossible, réessayez.');
+      }).finally(function () {
+        bouton.disabled = false;
+        bouton.textContent = 'Je commande – paiement à la livraison';
+      });
+    });
+
+    function montrerErreur(m) { erreurEl.textContent = m; erreurEl.hidden = false; }
+  })();
+</script>

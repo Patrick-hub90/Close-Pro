@@ -56,19 +56,19 @@ async function sha256(v: string) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-// Appli Shopify (Dev Dashboard) installée sur la boutique : identifiants en secrets Supabase
-// `<PREFIXE>_CLIENT_ID` / `<PREFIXE>_CLIENT_SECRET`. Sans eux, la commande n'existe que dans Close-Pro.
-const APPLI_SHOPIFY: Record<string, string> = {
-  'utauxp-w2.myshopify.com': 'SHOPIFY_SENE',
-  'nrxije-7h.myshopify.com': 'SHOPIFY_CAME',
+// Appli Shopify (Dev Dashboard) installée sur la boutique : noms des secrets Supabase qui portent son
+// Client ID et son Client secret. Sans eux, la commande n'existe que dans Close-Pro.
+const APPLI_SHOPIFY: Record<string, { id: string; secret: string }> = {
+  'utauxp-w2.myshopify.com': { id: 'SHOPIFY_SENE_CLIENT_ID', secret: 'SHOPIFY_SENE_CLIENT_SECRET' },
+  'nrxije-7h.myshopify.com': { id: 'SHOPIFY_CM_CLIENT_ID_CAME', secret: 'SHOPIFY_SENE_CLIENT_SECRET_CAME' },
 }
 const jetons = new Map<string, { jeton: string; expire: number }>()
 
 /** Jeton Admin API obtenu par « client credentials » (valable ~24 h, gardé en mémoire). */
 async function jetonShopify(shop: string): Promise<string | null> {
-  const prefixe = APPLI_SHOPIFY[shop]
-  const id = prefixe && Deno.env.get(prefixe + '_CLIENT_ID')
-  const secret = prefixe && Deno.env.get(prefixe + '_CLIENT_SECRET')
+  const appli = APPLI_SHOPIFY[shop]
+  const id = appli && Deno.env.get(appli.id)
+  const secret = appli && Deno.env.get(appli.secret)
   if (!id || !secret) return null
   const enCache = jetons.get(shop)
   if (enCache && enCache.expire > Date.now() + 60_000) return enCache.jeton

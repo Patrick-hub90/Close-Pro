@@ -211,7 +211,9 @@ Deno.serve(async (req) => {
 
   const nom = court(b.nom, 80)
   const adresse = court(b.adresse, 200)
-  const ville = court(b.ville, 80) // ancien champ séparé ; le quartier et la ville sont désormais dans `adresse`
+  // Zone de livraison (Sénégal) : « Dakar » ou « Hors Dakar » (paiement avant expédition). Anciennes versions : `ville`.
+  const horsDakar = b.zone === 'hors_dakar'
+  const ville = b.zone === 'dakar' ? 'Dakar' : horsDakar ? 'Hors Dakar' : court(b.ville, 80)
   const handle = court(b.handle, 200)
   const quantite = Math.min(Math.max(parseInt(b.quantite) || 1, 1), 5)
   const e164 = normPhone(String(b.telephone || ''), pays)
@@ -268,7 +270,8 @@ Deno.serve(async (req) => {
     nom_complet: nom, telephone: court(b.telephone, 40), telephone_e164: e164,
     whatsapp: e164.replace(/\D/g, ''), adresse, region: ville,
     statut: test ? 'annule' : 'a_appeler', is_backfill: false,
-    dernier_commentaire: test ? 'TEST formulaire (à ignorer)' : alerte,
+    dernier_commentaire: test ? 'TEST formulaire (à ignorer)'
+      : [horsDakar ? '🚚 Hors Dakar : paiement avant expédition (client prévenu sur le formulaire)' : null, alerte].filter(Boolean).join(' · ') || null,
     appel_deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(), appel_deadline_type: 'nouvelle_10min',
     date_commande: maintenant,
     extra: { boutique: shop, handle, variante: produit.variante, note: court(b.note, 300) },

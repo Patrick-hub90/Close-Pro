@@ -24,9 +24,17 @@
       </span>
       <small class="ncf__aide" hidden>Numéro sénégalais à 9 chiffres, commençant par 70, 75, 76, 77 ou 78.</small>
     </label>
+    <div class="ncf__champ">
+      <span>Lieu de livraison</span>
+      <div class="ncf__zones" role="radiogroup">
+        <label><input type="radio" name="zone" value="dakar" checked><span>📍 Dakar</span></label>
+        <label><input type="radio" name="zone" value="hors_dakar"><span>🚚 Hors Dakar</span></label>
+      </div>
+      <p class="ncf__hors" hidden>Hors Dakar, <strong>le paiement se fait avant l'expédition</strong> du colis. Un conseiller vous appelle pour vous expliquer comment payer.</p>
+    </div>
     <label class="ncf__champ">
-      <span>Quartier et ville</span>
-      <input name="adresse" type="text" autocomplete="street-address" placeholder="Ex : Liberté 6, près de la pharmacie, Dakar" required>
+      <span data-label-adresse>Quartier</span>
+      <input name="adresse" type="text" autocomplete="street-address" placeholder="Ex : Liberté 6, près de la pharmacie" required>
     </label>
     <label class="ncf__piege" aria-hidden="true">Site web <input name="site_web" type="text" tabindex="-1" autocomplete="off"></label>
 
@@ -39,7 +47,7 @@
       </div>
     </div>
 
-    <div class="ncf__total"><span>Total à payer à la livraison</span><strong data-total></strong></div>
+    <div class="ncf__total"><span data-label-total>Total à payer à la livraison</span><strong data-total></strong></div>
     <p class="ncf__appel" data-appel></p>
     <div class="ncf__erreur" role="alert" hidden></div>
     <button class="ncf__bouton" type="submit">Je commande – paiement à la livraison</button>
@@ -50,6 +58,7 @@
     <p class="ncf__merci-titre">✅ Commande reçue !</p>
     <p>Commande n° <strong data-numero></strong>.</p>
     <p data-merci-appel></p>
+    <p data-merci-wa></p>
   </div>
 </div>
 
@@ -66,6 +75,13 @@
   .ncf__tel input.ncf--invalide{border-color:#f83a3a}
   .ncf__ok{position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#00a341;font-style:normal;font-weight:700;font-size:18px}
   .ncf__aide{display:block;margin-top:4px;color:#f83a3a;font-size:.8em}
+  .ncf__zones{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .ncf__zones label{position:relative;cursor:pointer}
+  .ncf__zones input{position:absolute;opacity:0;pointer-events:none}
+  .ncf__zones span{display:block;padding:12px 8px;border:1px solid #cfcfcf;border-radius:10px;text-align:center;font-weight:600;background:#fff}
+  .ncf__zones input:checked + span{border:2px solid #1a1a1a;background:#f0f0f0}
+  .ncf__hors{margin:8px 0 0;padding:10px 12px;border-radius:10px;background:#fff4e0;font-size:.9em;line-height:1.4}
+  .ncf__merci a.ncf__wa{display:inline-block;margin-top:6px;padding:14px 18px;border-radius:12px;background:#25d366;color:#fff;font-weight:700;text-decoration:none}
   .ncf__piege{position:absolute!important;left:-9999px!important;width:1px;height:1px;overflow:hidden}
   .ncf__qte,.ncf__total{display:flex;align-items:center;justify-content:space-between;margin:10px 0}
   .ncf__stepper{display:flex;align-items:center;gap:6px;border:1px solid #cfcfcf;border-radius:999px;padding:3px}
@@ -129,6 +145,19 @@
       okTel.hidden = !ok;
       aideTel.hidden = ok || !(final || d.length >= 9);
     }
+    // Dakar / Hors Dakar : hors Dakar, le paiement se fait avant l'expédition (on prévient avant la commande).
+    var horsEl = racine.querySelector('.ncf__hors');
+    var labelAdr = racine.querySelector('[data-label-adresse]');
+    var champAdr = form.querySelector('input[name=adresse]');
+    function zone() { var z = form.querySelector('input[name=zone]:checked'); return z ? z.value : 'dakar'; }
+    function majZone() {
+      var hors = zone() === 'hors_dakar';
+      horsEl.hidden = !hors;
+      labelAdr.textContent = hors ? 'Ville et quartier' : 'Quartier';
+      champAdr.placeholder = hors ? 'Ex : Thiès, quartier Escale' : 'Ex : Liberté 6, près de la pharmacie';
+      racine.querySelector('[data-label-total]').textContent = hors ? 'Total à payer avant l\'expédition' : 'Total à payer à la livraison';
+    }
+    form.querySelectorAll('input[name=zone]').forEach(function (r) { r.addEventListener('change', majZone); });
     champTel.addEventListener('input', function () { majTel(false); });
     champTel.addEventListener('blur', function () { if (champTel.value) majTel(true); });
 
@@ -171,7 +200,7 @@
       var nom = String(d.get('nom') || '').trim(), tel = String(d.get('telephone') || '').trim(), adr = String(d.get('adresse') || '').trim();
       if (nom.length < 2) return montrerErreur('Indiquez votre nom.');
       if (!telValide(tel)) { majTel(true); return montrerErreur('Vérifiez votre numéro de téléphone.'); }
-      if (adr.length < 3) return montrerErreur('Indiquez votre quartier et votre ville.');
+      if (adr.length < 3) return montrerErreur(zone() === 'hors_dakar' ? 'Indiquez votre ville et votre quartier.' : 'Indiquez votre quartier.');
 
       var eventId = 'achat-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
       var arrivee = '';
@@ -184,7 +213,7 @@
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           shop: racine.dataset.shop, handle: racine.dataset.handle, quantite: qte,
-          nom: nom, telephone: tel, adresse: adr, site_web: d.get('site_web'),
+          nom: nom, telephone: tel, adresse: adr, zone: zone(), site_web: d.get('site_web'),
           full_url: arrivee || location.href, fbp: cookie('_fbp'), fbc: cookie('_fbc'), event_id: eventId
         })
       }).then(function (r) { return r.json(); }).then(function (rep) {
@@ -198,6 +227,12 @@
         if (window.fbq) fbq('track', 'Purchase', { value: rep.total, currency: devise, content_ids: [racine.dataset.handle], content_type: 'product' }, { eventID: eventId });
         racine.querySelector('[data-numero]').textContent = rep.numero;
         racine.querySelector('[data-merci-appel]').innerHTML = messageAppel();
+        if (reglages.contact) {
+          var lieu = zone() === 'hors_dakar' ? 'hors Dakar (' + adr + ')' : 'Dakar, ' + adr;
+          var txt = 'Bonjour, je confirme ma commande n° ' + rep.numero + ' : ' + {{ product.title | json }} + ' (quantité ' + qte + '), livraison ' + lieu + '. Mon nom : ' + nom + '.';
+          racine.querySelector('[data-merci-wa]').innerHTML = 'Pour être servi plus vite, confirmez sur WhatsApp :<br><a class="ncf__wa" href="https://wa.me/'
+            + String(reglages.contact).replace(/\D/g, '') + '?text=' + encodeURIComponent(txt) + '" target="_blank" rel="noopener">📲 Confirmer ma commande sur WhatsApp</a>';
+        }
         form.hidden = true;
         racine.querySelector('.ncf__merci').hidden = false;
         racine.scrollIntoView({ behavior: 'smooth', block: 'center' });

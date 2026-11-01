@@ -100,23 +100,29 @@ async function commandeShopify(shop: string, o: {
   adresse: string; ville: string | null; pays: string; test: boolean; devise: string
 }) {
   const [prenom, ...reste] = o.nom.split(/\s+/)
-  const data = await adminShopify(shop, `mutation($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+  const creer = (avecTel: boolean) => adminShopify(shop, `mutation($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
       orderCreate(order: $order, options: $options) { order { id name } userErrors { field message } } }`, {
     order: {
       name: '#' + o.numero,
       currency: o.devise,
       financialStatus: 'PENDING',
-      phone: o.e164,
+      ...(avecTel ? { phone: o.e164 } : {}),
       test: o.test,
       lineItems: [{ variantId: o.variante, quantity: o.quantite, priceSet: { shopMoney: { amount: String(o.prix), currencyCode: o.devise } } }],
-      shippingAddress: { firstName: prenom, lastName: reste.join(' ') || prenom, address1: o.adresse, city: o.ville || '', countryCode: o.pays, phone: o.e164 },
-      note: 'Formulaire Noshop – commande Close-Pro n° ' + o.numero,
+      shippingAddress: {
+        firstName: prenom, lastName: reste.join(' ') || prenom, address1: o.adresse, city: o.ville || '', countryCode: o.pays,
+        ...(avecTel ? { phone: o.e164 } : {}),
+      },
+      note: 'Formulaire Noshop – commande Close-Pro n° ' + o.numero + ' – tél. ' + o.e164,
       tags: ['formulaire-cod', 'close-pro'],
       sourceName: 'noshop-formulaire',
     },
     options: { sendReceipt: false, sendFulfillmentReceipt: false, inventoryBehaviour: 'BYPASS' },
   })
-  const res = data?.orderCreate
+  let res = (await creer(true))?.orderCreate
+  // Shopify refuse les numéros qu'il juge invalides (« Phone is invalid ») : on recrée la commande sans
+  // le champ téléphone, le numéro reste dans la note et dans Close-Pro.
+  if (res?.userErrors?.some((e: { field?: string[] }) => e.field?.includes('phone'))) res = (await creer(false))?.orderCreate
   if (!res || res.userErrors?.length) { console.error('orderCreate', o.numero, JSON.stringify(res?.userErrors ?? 'pas de réponse')); return null }
   return res.order as { id: string; name: string }
 }

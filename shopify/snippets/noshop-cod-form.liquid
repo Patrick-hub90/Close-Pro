@@ -209,7 +209,7 @@
       var nom = String(d.get('nom') || '').trim(), tel = String(d.get('telephone') || '').trim(), adr = String(d.get('adresse') || '').trim();
       if (nom.length < 2) return montrerErreur('Indiquez votre nom.');
       if (!telValide(tel)) { majTel(true); return montrerErreur('Vérifiez votre numéro de téléphone.'); }
-      if (adr.length < 3) return montrerErreur('Indiquez votre quartier et votre ville.');
+      if (!adr) return montrerErreur('Indiquez votre quartier et votre ville.');
 
       var eventId = 'achat-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
       var arrivee = '';

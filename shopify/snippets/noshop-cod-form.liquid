@@ -2,6 +2,7 @@
   Formulaire de commande « paiement à la livraison » (remplace EasySell).
   Envoie la commande à l'Edge Function Close-Pro `commande-cod` : la commande arrive directement dans
   l'appli des closeuses. Le prix affiché n'est qu'indicatif : le serveur relit le vrai prix.
+  Les heures d'appel et le numéro de contact viennent de la fonction (réglages app_config), pas du thème.
   Usage dans un bloc « Liquid personnalisé » de la page produit : {% render 'noshop-cod-form', product: product %}
 {%- endcomment -%}
 {%- assign prix = product.selected_or_first_available_variant.price -%}
@@ -17,19 +18,17 @@
     </label>
     <label class="ncf__champ">
       <span>Téléphone (WhatsApp de préférence)</span>
-      <input name="telephone" type="tel" inputmode="tel" autocomplete="tel" placeholder="77 123 45 67" required>
+      <span class="ncf__tel">
+        <input name="telephone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="77 123 45 67" maxlength="16" required>
+        <i class="ncf__ok" aria-hidden="true" hidden>✓</i>
+      </span>
+      <small class="ncf__aide" hidden>Numéro sénégalais à 9 chiffres, commençant par 70, 75, 76, 77 ou 78.</small>
     </label>
     <label class="ncf__champ">
-      <span>Ville</span>
-      <select name="ville">
-        <option>Dakar</option><option>Pikine</option><option>Guédiawaye</option><option>Rufisque</option>
-        <option>Keur Massar</option><option>Thiès</option><option>Mbour</option><option>Autre ville</option>
-      </select>
+      <span>Quartier et ville</span>
+      <input name="adresse" type="text" autocomplete="street-address" placeholder="Ex : Liberté 6, près de la pharmacie, Dakar" required>
     </label>
-    <label class="ncf__champ">
-      <span>Quartier et adresse de livraison</span>
-      <input name="adresse" type="text" autocomplete="street-address" placeholder="Ex : Liberté 6, près de la pharmacie" required>
-    </label>
+    <label class="ncf__piege" aria-hidden="true">Site web <input name="site_web" type="text" tabindex="-1" autocomplete="off"></label>
 
     <div class="ncf__qte">
       <span>Quantité</span>
@@ -41,15 +40,16 @@
     </div>
 
     <div class="ncf__total"><span>Total à payer à la livraison</span><strong data-total></strong></div>
-    <p class="ncf__erreur" role="alert" hidden></p>
+    <p class="ncf__appel" data-appel></p>
+    <div class="ncf__erreur" role="alert" hidden></div>
     <button class="ncf__bouton" type="submit">Je commande – paiement à la livraison</button>
-    <p class="ncf__rassure">📦 Colis discret · 💵 Aucun paiement en ligne · 📞 Un conseiller vous appelle pour confirmer</p>
+    <p class="ncf__rassure">📦 Colis discret · 💵 Aucun paiement en ligne</p>
   </form>
 
   <div class="ncf__merci" hidden>
     <p class="ncf__merci-titre">✅ Commande reçue !</p>
-    <p>Commande n° <strong data-numero></strong>. Un conseiller va vous appeler très vite pour confirmer la livraison.</p>
-    <p>Gardez votre téléphone à portée de main 📞</p>
+    <p>Commande n° <strong data-numero></strong>.</p>
+    <p data-merci-appel></p>
   </div>
 </div>
 
@@ -58,16 +58,24 @@
   .ncf__titre{margin:0 0 14px;font-weight:700;font-size:1.15em;text-align:center;line-height:1.3}
   .ncf__titre span{font-weight:500;font-size:.85em;color:#00a341}
   .ncf__champ{display:block;margin-bottom:12px}
-  .ncf__champ span{display:block;font-size:.85em;font-weight:600;margin-bottom:4px}
-  .ncf__champ input,.ncf__champ select{width:100%;padding:12px 14px;border:1px solid #cfcfcf;border-radius:10px;font-size:16px;background:#fff}
-  .ncf__champ input:focus,.ncf__champ select:focus{outline:none;border-color:#1a1a1a}
+  .ncf__champ > span:first-child{display:block;font-size:.85em;font-weight:600;margin-bottom:4px}
+  .ncf__champ input{width:100%;padding:12px 14px;border:1px solid #cfcfcf;border-radius:10px;font-size:16px;background:#fff}
+  .ncf__champ input:focus{outline:none;border-color:#1a1a1a}
+  .ncf__tel{position:relative;display:block}
+  .ncf__tel input.ncf--valide{border-color:#00a341;padding-right:40px}
+  .ncf__tel input.ncf--invalide{border-color:#f83a3a}
+  .ncf__ok{position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#00a341;font-style:normal;font-weight:700;font-size:18px}
+  .ncf__aide{display:block;margin-top:4px;color:#f83a3a;font-size:.8em}
+  .ncf__piege{position:absolute!important;left:-9999px!important;width:1px;height:1px;overflow:hidden}
   .ncf__qte,.ncf__total{display:flex;align-items:center;justify-content:space-between;margin:10px 0}
   .ncf__stepper{display:flex;align-items:center;gap:6px;border:1px solid #cfcfcf;border-radius:999px;padding:3px}
   .ncf .ncf__stepper button{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;margin:0;border:0;border-radius:50%;background:#f0f0f0;color:#1a1a1a;font:600 20px/1 system-ui,sans-serif;cursor:pointer}
   .ncf__stepper output{min-width:28px;text-align:center;font-weight:700;font-size:17px}
   .ncf__total{padding:12px 14px;background:#f0f0f0;border-radius:10px}
   .ncf__total strong{font-size:1.25em}
-  .ncf__erreur{color:#f83a3a;font-weight:600;margin:8px 0}
+  .ncf__appel{margin:10px 0;padding:10px 12px;border-radius:10px;background:#eaf7ef;color:#1a1a1a;font-size:.9em;line-height:1.4;text-align:center}
+  .ncf__erreur{color:#f83a3a;font-weight:600;margin:8px 0;line-height:1.4}
+  .ncf__erreur a{color:#1a1a1a;text-decoration:underline}
   .ncf .ncf__bouton{display:flex;align-items:center;justify-content:center;width:100%;padding:16px;border:0;border-radius:12px;background:#f83a3a;color:#fff;font-size:17px;font-weight:700;line-height:1.3;text-align:center;cursor:pointer;animation:ncf-pulse 2s infinite}
   .ncf__bouton[disabled]{opacity:.6;animation:none;cursor:wait}
   .ncf__rassure{font-size:.8em;text-align:center;margin:10px 0 0;color:#555}
@@ -83,13 +91,18 @@
     racine.dataset.pret = '1';
     var FONCTION = 'https://mhbykrhuzvwvwvbqfqwn.supabase.co/functions/v1/commande-cod';
     var form = racine.querySelector('form');
+    var champTel = form.querySelector('input[name=telephone]');
+    var okTel = racine.querySelector('.ncf__ok');
+    var aideTel = racine.querySelector('.ncf__aide');
     var sortieQte = form.querySelector('output[name=quantite]');
     var totalEl = racine.querySelector('[data-total]');
+    var appelEl = racine.querySelector('[data-appel]');
     var erreurEl = racine.querySelector('.ncf__erreur');
     var bouton = form.querySelector('.ncf__bouton');
     var prix = Number(racine.dataset.prix) || 0;
     var devise = racine.dataset.devise || 'XOF';
     var qte = 1, debutSaisie = false;
+    var reglages = { heure_debut: 8, heure_limite: 19, contact: null };
 
     // Garde l'URL d'arrivée (avec fbclid / utm de la pub) pour la durée de la visite.
     try {
@@ -99,7 +112,41 @@
     function fcfa(n) { return n.toLocaleString('fr-FR').replace(/ | /g, ' ') + ' FCFA'; }
     function majTotal() { sortieQte.textContent = qte; totalEl.textContent = fcfa(prix * qte); }
     function cookie(nom) { var m = document.cookie.match('(?:^|; )' + nom + '=([^;]*)'); return m ? decodeURIComponent(m[1]) : ''; }
+
+    // Numéro sénégalais : 9 chiffres commençant par 70, 75, 76, 77, 78 (ou 33 fixe), avec ou sans +221.
+    function chiffresTel(v) {
+      var d = String(v || '').replace(/\D/g, '');
+      if (d.indexOf('00221') === 0) d = d.slice(5); else if (d.indexOf('221') === 0 && d.length > 9) d = d.slice(3);
+      return d;
+    }
+    function telValide(v) { return /^(7[05678]|33)\d{7}$/.test(chiffresTel(v)); }
+    function majTel(final) {
+      var d = chiffresTel(champTel.value).slice(0, 9);
+      champTel.value = [d.slice(0, 2), d.slice(2, 5), d.slice(5, 7), d.slice(7, 9)].filter(Boolean).join(' ');
+      var ok = telValide(d);
+      champTel.classList.toggle('ncf--valide', ok);
+      champTel.classList.toggle('ncf--invalide', !ok && (final || d.length >= 9));
+      okTel.hidden = !ok;
+      aideTel.hidden = ok || !(final || d.length >= 9);
+    }
+    champTel.addEventListener('input', function () { majTel(false); });
+    champTel.addEventListener('blur', function () { if (champTel.value) majTel(true); });
+
+    // Heure locale du Sénégal (UTC+0) : avant l'heure limite on promet un appel rapide, sinon demain matin.
+    function heureSenegal() { return new Date().getUTCHours(); }
+    function messageAppel() {
+      var h = heureSenegal();
+      if (h >= reglages.heure_debut && h < reglages.heure_limite) {
+        return '📞 Un conseiller vous appelle dans les <strong>10 minutes</strong> pour confirmer. Répondez pour recevoir votre colis rapidement.';
+      }
+      return '🌙 Un conseiller vous appelle <strong>' + (h >= reglages.heure_limite ? 'demain' : "aujourd'hui") + ' à partir de ' + reglages.heure_debut + ' h</strong> pour organiser la livraison. Gardez votre téléphone allumé.';
+    }
+    function majAppel() { appelEl.innerHTML = messageAppel(); }
+
     majTotal();
+    majAppel();
+    fetch(FONCTION + '?shop=' + encodeURIComponent(racine.dataset.shop)).then(function (r) { return r.json(); })
+      .then(function (r) { if (r && r.ok) { reglages = r; majAppel(); } }).catch(function () {});
 
     racine.querySelectorAll('[data-q]').forEach(function (b) {
       b.addEventListener('click', function () { qte = Math.min(5, Math.max(1, qte + Number(b.dataset.q))); majTotal(); });
@@ -110,14 +157,19 @@
       if (window.fbq) fbq('track', 'InitiateCheckout', { value: prix, currency: devise, content_ids: [racine.dataset.handle], content_type: 'product' });
     });
 
+    function lienContact(num) {
+      var d = String(num || '').replace(/\D/g, '');
+      return '<a href="https://wa.me/' + d + '" target="_blank" rel="noopener">' + num + '</a>';
+    }
+
     form.addEventListener('submit', function (ev) {
       ev.preventDefault();
       erreurEl.hidden = true;
       var d = new FormData(form);
       var nom = String(d.get('nom') || '').trim(), tel = String(d.get('telephone') || '').trim(), adr = String(d.get('adresse') || '').trim();
       if (nom.length < 2) return montrerErreur('Indiquez votre nom.');
-      if (tel.replace(/\D/g, '').length < 9) return montrerErreur('Indiquez un numéro de téléphone valide.');
-      if (!adr) return montrerErreur('Indiquez votre quartier ou votre adresse.');
+      if (!telValide(tel)) { majTel(true); return montrerErreur('Vérifiez votre numéro de téléphone.'); }
+      if (adr.length < 3) return montrerErreur('Indiquez votre quartier et votre ville.');
 
       var eventId = 'achat-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
       var arrivee = '';
@@ -130,13 +182,22 @@
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           shop: racine.dataset.shop, handle: racine.dataset.handle, quantite: qte,
-          nom: nom, telephone: tel, ville: d.get('ville'), adresse: adr,
+          nom: nom, telephone: tel, adresse: adr, site_web: d.get('site_web'),
           full_url: arrivee || location.href, fbp: cookie('_fbp'), fbc: cookie('_fbc'), event_id: eventId
         })
       }).then(function (r) { return r.json(); }).then(function (rep) {
+        if (rep.deja) {
+          var m = 'Vous avez déjà passé une commande avec ce numéro (n° ' + rep.numero + ').';
+          if (!rep.appele) m += rep.contact
+            ? ' Vous n\'avez pas encore été appelé ? Contactez-nous sur WhatsApp au ' + lienContact(rep.contact) + '.'
+            : ' Un conseiller va vous appeler très bientôt.';
+          else m += ' Notre conseiller est déjà en contact avec vous.';
+          return montrerErreur(m, true);
+        }
         if (!rep.ok) throw new Error(rep.erreur || 'Erreur, réessayez.');
-        if (window.fbq && !rep.doublon) fbq('track', 'Purchase', { value: rep.total, currency: devise, content_ids: [racine.dataset.handle], content_type: 'product' }, { eventID: eventId });
+        if (window.fbq) fbq('track', 'Purchase', { value: rep.total, currency: devise, content_ids: [racine.dataset.handle], content_type: 'product' }, { eventID: eventId });
         racine.querySelector('[data-numero]').textContent = rep.numero;
+        racine.querySelector('[data-merci-appel]').innerHTML = messageAppel();
         form.hidden = true;
         racine.querySelector('.ncf__merci').hidden = false;
         racine.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -148,6 +209,9 @@
       });
     });
 
-    function montrerErreur(m) { erreurEl.textContent = m; erreurEl.hidden = false; }
+    function montrerErreur(m, html) {
+      if (html) erreurEl.innerHTML = m; else erreurEl.textContent = m;
+      erreurEl.hidden = false;
+    }
   })();
 </script>

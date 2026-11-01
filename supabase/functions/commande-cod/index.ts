@@ -21,7 +21,7 @@ const INDICATIFS: Record<string, { ind: string; len: number; prefixes: RegExp }>
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'content-type',
 }
 const json = (body: unknown, status = 200) =>
@@ -178,8 +178,26 @@ async function envoyerAchatMeta(o: {
   if (!r.ok) console.error('capi', o.numero, r.status, (await r.text()).slice(0, 300))
 }
 
+/**
+ * Réglages affichés par le formulaire, modifiables dans app_config sans toucher au thème :
+ * `cod_heure_debut_<domaine>` / `cod_heure_limite_<domaine>` (heures d'appel, heure locale du pays) et
+ * `cod_contact_<domaine>` (numéro à contacter si le client a déjà commandé sans être rappelé).
+ */
+async function reglages(shop: string) {
+  return {
+    heure_debut: Number(await config('cod_heure_debut_' + shop) ?? 8),
+    heure_limite: Number(await config('cod_heure_limite_' + shop) ?? 19),
+    contact: await config('cod_contact_' + shop),
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  if (req.method === 'GET') {
+    const shop = (new URL(req.url).searchParams.get('shop') || '').toLowerCase()
+    if (!(await config('cod_shop_' + shop))) return json({ ok: false }, 403)
+    return json({ ok: true, ...(await reglages(shop)) })
+  }
   if (req.method !== 'POST') return json({ ok: false, erreur: 'méthode' }, 405)
 
   let b: Record<string, any>
@@ -188,10 +206,12 @@ Deno.serve(async (req) => {
   const shop = String(b.shop || '').toLowerCase()
   const pays = await config('cod_shop_' + shop)
   if (!pays) return json({ ok: false, erreur: 'Boutique non autorisée.' }, 403)
+  // Champ piège invisible : seul un robot le remplit. On répond « ok » sans rien créer.
+  if (court(b.site_web)) return json({ ok: true, numero: '—', total: 0 })
 
   const nom = court(b.nom, 80)
   const adresse = court(b.adresse, 200)
-  const ville = court(b.ville, 80)
+  const ville = court(b.ville, 80) // ancien champ séparé ; le quartier et la ville sont désormais dans `adresse`
   const handle = court(b.handle, 200)
   const quantite = Math.min(Math.max(parseInt(b.quantite) || 1, 1), 5)
   const e164 = normPhone(String(b.telephone || ''), pays)
@@ -209,11 +229,22 @@ Deno.serve(async (req) => {
   if (!produit) return json({ ok: false, erreur: 'Produit introuvable.' }, 422)
   const total = produit.prix * quantite
 
-  // Même téléphone + même produit dans les 15 dernières minutes : on renvoie la commande existante.
-  const { data: dejaVue } = await db.from('orders').select('numero')
-    .eq('pays', pays).eq('telephone_e164', e164).eq('produit_nom', produit.titre)
-    .gte('created_at', new Date(Date.now() - 15 * 60 * 1000).toISOString()).limit(1).maybeSingle()
-  if (dejaVue) return json({ ok: true, numero: (dejaVue as { numero: string }).numero, doublon: true })
+  // Une seule commande en cours par numéro sur 24 h : on prévient le client au lieu d'en créer une 2e.
+  if (!test) {
+    const { data: deja } = await db.from('orders').select('numero, statut')
+      .eq('pays', pays).eq('telephone_e164', e164).not('statut', 'in', '(annule,refuse)')
+      .gte('created_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString())
+      .order('created_at', { ascending: false }).limit(1).maybeSingle()
+    if (deja) {
+      const d = deja as { numero: string; statut: string }
+      return json({ ok: false, deja: true, numero: d.numero, appele: d.statut !== 'a_appeler', contact: (await reglages(shop)).contact })
+    }
+  }
+
+  // Client déjà annulé / refusé plusieurs fois : la commande passe, mais la closeuse est prévenue.
+  const { count: echecs } = await db.from('orders').select('id', { count: 'exact', head: true })
+    .eq('telephone_e164', e164).in('statut', ['annule', 'refuse'])
+  const alerte = !test && (echecs ?? 0) >= 2 ? `⚠️ Client à risque : ${echecs} commandes annulées ou refusées avec ce numéro` : null
 
   const { data: seq, error: eSeq } = await db.rpc('cod_prochain_numero')
   if (eSeq || !seq) { console.error('numero', eSeq?.message); return json({ ok: false, erreur: 'Erreur, réessayez.' }, 500) }
@@ -237,7 +268,7 @@ Deno.serve(async (req) => {
     nom_complet: nom, telephone: court(b.telephone, 40), telephone_e164: e164,
     whatsapp: e164.replace(/\D/g, ''), adresse, region: ville,
     statut: test ? 'annule' : 'a_appeler', is_backfill: false,
-    dernier_commentaire: test ? 'TEST formulaire (à ignorer)' : null,
+    dernier_commentaire: test ? 'TEST formulaire (à ignorer)' : alerte,
     appel_deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(), appel_deadline_type: 'nouvelle_10min',
     date_commande: maintenant,
     extra: { boutique: shop, handle, variante: produit.variante, note: court(b.note, 300) },

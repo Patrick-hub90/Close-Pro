@@ -52,7 +52,10 @@ async function sha256(v: string) {
 
 // Appli Shopify (Dev Dashboard) installée sur la boutique : identifiants en secrets Supabase
 // `<PREFIXE>_CLIENT_ID` / `<PREFIXE>_CLIENT_SECRET`. Sans eux, la commande n'existe que dans Close-Pro.
-const APPLI_SHOPIFY: Record<string, string> = { 'utauxp-w2.myshopify.com': 'SHOPIFY_SENE' }
+const APPLI_SHOPIFY: Record<string, string> = {
+  'utauxp-w2.myshopify.com': 'SHOPIFY_SENE',
+  'nrxije-7h.myshopify.com': 'SHOPIFY_CAME',
+}
 const jetons = new Map<string, { jeton: string; expire: number }>()
 
 /** Jeton Admin API obtenu par « client credentials » (valable ~24 h, gardé en mémoire). */
@@ -88,18 +91,18 @@ async function adminShopify(shop: string, query: string, variables: Record<strin
 /** Crée la commande « paiement à la livraison » (paiement en attente) dans Shopify, même numéro que Close-Pro. */
 async function commandeShopify(shop: string, o: {
   numero: string; variante: string; quantite: number; prix: number; nom: string; e164: string
-  adresse: string; ville: string | null; pays: string; test: boolean
+  adresse: string; ville: string | null; pays: string; test: boolean; devise: string
 }) {
   const [prenom, ...reste] = o.nom.split(/\s+/)
   const data = await adminShopify(shop, `mutation($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
       orderCreate(order: $order, options: $options) { order { id name } userErrors { field message } } }`, {
     order: {
       name: '#' + o.numero,
-      currency: 'XOF',
+      currency: o.devise,
       financialStatus: 'PENDING',
       phone: o.e164,
       test: o.test,
-      lineItems: [{ variantId: o.variante, quantity: o.quantite, priceSet: { shopMoney: { amount: String(o.prix), currencyCode: 'XOF' } } }],
+      lineItems: [{ variantId: o.variante, quantity: o.quantite, priceSet: { shopMoney: { amount: String(o.prix), currencyCode: o.devise } } }],
       shippingAddress: { firstName: prenom, lastName: reste.join(' ') || prenom, address1: o.adresse, city: o.ville || '', countryCode: o.pays, phone: o.e164 },
       note: 'Formulaire Noshop – commande Close-Pro n° ' + o.numero,
       tags: ['formulaire-cod', 'close-pro'],
@@ -119,11 +122,11 @@ async function commandeShopify(shop: string, o: {
  */
 async function produitBoutique(shop: string, handle: string) {
   const admin = await adminShopify(shop, `query($h: String!) { productByIdentifier(identifier: { handle: $h }) {
-      title variants(first: 1) { nodes { id price } } } }`, { h: handle })
+      title variants(first: 1) { nodes { id price } } } shop { currencyCode } }`, { h: handle })
   const pa = admin?.productByIdentifier
   if (pa?.variants?.nodes?.[0]) {
     const v = pa.variants.nodes[0]
-    return { titre: pa.title as string, variante: v.id as string | null, prix: Math.round(Number(v.price)) }
+    return { titre: pa.title as string, variante: v.id as string | null, prix: Math.round(Number(v.price)), devise: (admin.shop?.currencyCode as string) || 'XOF' }
   }
   try {
     const r = await fetch(`https://${shop}/products/${encodeURIComponent(handle)}.js`)
@@ -286,6 +289,7 @@ Deno.serve(async (req) => {
     try {
       shopifyCommande = await commandeShopify(shop, {
         numero, variante: produit.variante, quantite, prix: produit.prix, nom, e164, adresse, ville, pays, test,
+        devise: ('devise' in produit && produit.devise) || 'XOF',
       })
       if (shopifyCommande) {
         await db.from('orders').update({

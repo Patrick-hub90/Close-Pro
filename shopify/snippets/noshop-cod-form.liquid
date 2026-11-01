@@ -34,7 +34,7 @@
     <div class="ncf__qte">
       <span>Quantité</span>
       <div class="ncf__stepper">
-        <button type="button" data-q="-1" aria-label="Moins">−</button>
+        <button type="button" data-q="-1" aria-label="Moins">&minus;</button>
         <output name="quantite">1</output>
         <button type="button" data-q="1" aria-label="Plus">+</button>
       </div>
@@ -62,12 +62,13 @@
   .ncf__champ input,.ncf__champ select{width:100%;padding:12px 14px;border:1px solid #cfcfcf;border-radius:10px;font-size:16px;background:#fff}
   .ncf__champ input:focus,.ncf__champ select:focus{outline:none;border-color:#1a1a1a}
   .ncf__qte,.ncf__total{display:flex;align-items:center;justify-content:space-between;margin:10px 0}
-  .ncf__stepper{display:flex;align-items:center;gap:14px}
-  .ncf__stepper button{width:38px;height:38px;border-radius:50%;border:1px solid #cfcfcf;background:#f0f0f0;font-size:20px;line-height:1;cursor:pointer}
+  .ncf__stepper{display:flex;align-items:center;gap:6px;border:1px solid #cfcfcf;border-radius:999px;padding:3px}
+  .ncf .ncf__stepper button{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;margin:0;border:0;border-radius:50%;background:#f0f0f0;color:#1a1a1a;font:600 20px/1 system-ui,sans-serif;cursor:pointer}
+  .ncf__stepper output{min-width:28px;text-align:center;font-weight:700;font-size:17px}
   .ncf__total{padding:12px 14px;background:#f0f0f0;border-radius:10px}
   .ncf__total strong{font-size:1.25em}
   .ncf__erreur{color:#f83a3a;font-weight:600;margin:8px 0}
-  .ncf__bouton{width:100%;padding:16px;border:0;border-radius:12px;background:#f83a3a;color:#fff;font-size:17px;font-weight:700;cursor:pointer;animation:ncf-pulse 2s infinite}
+  .ncf .ncf__bouton{display:flex;align-items:center;justify-content:center;width:100%;padding:16px;border:0;border-radius:12px;background:#f83a3a;color:#fff;font-size:17px;font-weight:700;line-height:1.3;text-align:center;cursor:pointer;animation:ncf-pulse 2s infinite}
   .ncf__bouton[disabled]{opacity:.6;animation:none;cursor:wait}
   .ncf__rassure{font-size:.8em;text-align:center;margin:10px 0 0;color:#555}
   .ncf__merci{text-align:center;padding:10px}

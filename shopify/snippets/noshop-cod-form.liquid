@@ -75,7 +75,7 @@
   .ncf__total strong{font-size:1.25em}
   .ncf__appel{margin:10px 0;padding:10px 12px;border-radius:10px;background:#eaf7ef;color:#1a1a1a;font-size:.9em;line-height:1.4;text-align:center}
   .ncf__erreur{color:#f83a3a;font-weight:600;margin:8px 0;line-height:1.4}
-  .ncf__erreur a{color:#1a1a1a;text-decoration:underline}
+  .ncf__erreur a.ncf__wa{display:inline-block;margin-top:8px;padding:10px 14px;border-radius:10px;background:#25d366;color:#fff;font-weight:700;text-decoration:none}
   .ncf .ncf__bouton{display:flex;align-items:center;justify-content:center;width:100%;padding:16px;border:0;border-radius:12px;background:#f83a3a;color:#fff;font-size:17px;font-weight:700;line-height:1.3;text-align:center;cursor:pointer;animation:ncf-pulse 2s infinite}
   .ncf__bouton[disabled]{opacity:.6;animation:none;cursor:wait}
   .ncf__rassure{font-size:.8em;text-align:center;margin:10px 0 0;color:#555}
@@ -157,9 +157,11 @@
       if (window.fbq) fbq('track', 'InitiateCheckout', { value: prix, currency: devise, content_ids: [racine.dataset.handle], content_type: 'product' });
     });
 
-    function lienContact(num) {
+    // Lien WhatsApp vers le service client, avec un message prérempli qui dit à la closeuse quel produit et quelle commande.
+    function lienContact(num, produit, numero) {
       var d = String(num || '').replace(/\D/g, '');
-      return '<a href="https://wa.me/' + d + '" target="_blank" rel="noopener">' + num + '</a>';
+      var texte = 'Bonjour, j\'ai commandé « ' + (produit || 'un produit') + ' » sur Noshop (commande n° ' + numero + '). Je voudrais avoir des nouvelles de ma commande.';
+      return '<a class="ncf__wa" href="https://wa.me/' + d + '?text=' + encodeURIComponent(texte) + '" target="_blank" rel="noopener">💬 Écrire sur WhatsApp au ' + num + '</a>';
     }
 
     form.addEventListener('submit', function (ev) {
@@ -188,10 +190,8 @@
       }).then(function (r) { return r.json(); }).then(function (rep) {
         if (rep.deja) {
           var m = 'Vous avez déjà passé une commande avec ce numéro (n° ' + rep.numero + ').';
-          if (!rep.appele) m += rep.contact
-            ? ' Vous n\'avez pas encore été appelé ? Contactez-nous sur WhatsApp au ' + lienContact(rep.contact) + '.'
-            : ' Un conseiller va vous appeler très bientôt.';
-          else m += ' Notre conseiller est déjà en contact avec vous.';
+          m += rep.appele ? ' Notre conseiller est déjà en contact avec vous.' : ' Un conseiller va vous appeler très bientôt.';
+          if (rep.contact) m += ' Pour toute question, écrivez-nous :<br>' + lienContact(rep.contact, rep.produit, rep.numero);
           return montrerErreur(m, true);
         }
         if (!rep.ok) throw new Error(rep.erreur || 'Erreur, réessayez.');

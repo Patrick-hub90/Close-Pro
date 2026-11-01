@@ -231,13 +231,13 @@ Deno.serve(async (req) => {
 
   // Une seule commande en cours par numéro sur 24 h : on prévient le client au lieu d'en créer une 2e.
   if (!test) {
-    const { data: deja } = await db.from('orders').select('numero, statut')
+    const { data: deja } = await db.from('orders').select('numero, statut, produit_nom')
       .eq('pays', pays).eq('telephone_e164', e164).not('statut', 'in', '(annule,refuse)')
       .gte('created_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString())
       .order('created_at', { ascending: false }).limit(1).maybeSingle()
     if (deja) {
-      const d = deja as { numero: string; statut: string }
-      return json({ ok: false, deja: true, numero: d.numero, appele: d.statut !== 'a_appeler', contact: (await reglages(shop)).contact })
+      const d = deja as { numero: string; statut: string; produit_nom: string | null }
+      return json({ ok: false, deja: true, numero: d.numero, produit: d.produit_nom, appele: d.statut !== 'a_appeler', contact: (await reglages(shop)).contact })
     }
   }
 

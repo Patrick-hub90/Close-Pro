@@ -6,35 +6,45 @@
   Usage dans un bloc « Liquid personnalisé » de la page produit : {% render 'noshop-cod-form', product: product %}
 {%- endcomment -%}
 {%- assign prix = product.selected_or_first_available_variant.price -%}
-<div class="ncf" id="ncf-{{ product.id }}"
-     data-shop="{{ shop.permanent_domain }}" data-handle="{{ product.handle }}"
+{%- comment -%} Pays de la boutique d'après sa devise : XAF = Cameroun, sinon Sénégal. {%- endcomment -%}
+{%- if shop.currency == 'XAF' -%}{%- assign pays = 'CM' -%}{%- else -%}{%- assign pays = 'SN' -%}{%- endif -%}
+<div class="ncf ncf--{{ pays | downcase }}" id="ncf-{{ product.id }}"
+     data-shop="{{ shop.permanent_domain }}" data-handle="{{ product.handle }}" data-pays="{{ pays }}"
      data-prix="{{ prix | divided_by: 100 }}" data-devise="{{ cart.currency.iso_code }}">
   <form class="ncf__form" novalidate>
     <p class="ncf__titre">Commandez maintenant<br><span>Vous payez seulement à la livraison</span></p>
 
     <label class="ncf__champ">
       <span>Nom complet</span>
-      <input name="nom" type="text" autocomplete="name" placeholder="Ex : Moussa Diop" required>
+      <input name="nom" type="text" autocomplete="name" placeholder="{% if pays == 'CM' %}Ex : Jean Mbarga{% else %}Ex : Moussa Diop{% endif %}" required>
     </label>
     <label class="ncf__champ">
       <span>Téléphone (WhatsApp de préférence)</span>
       <span class="ncf__tel">
-        <input name="telephone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="77 123 45 67" maxlength="16" required>
+        <input name="telephone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="{% if pays == 'CM' %}696 23 13 67{% else %}77 123 45 67{% endif %}" maxlength="16" required>
         <i class="ncf__ok" aria-hidden="true" hidden>✓</i>
       </span>
-      <small class="ncf__aide" hidden>Numéro sénégalais à 9 chiffres, commençant par 70, 75, 76, 77 ou 78.</small>
+      <small class="ncf__aide" hidden>{% if pays == 'CM' %}Numéro camerounais à 9 chiffres, commençant par 6.{% else %}Numéro sénégalais à 9 chiffres, commençant par 70, 75, 76, 77 ou 78.{% endif %}</small>
     </label>
     <div class="ncf__champ">
       <span>Lieu de livraison</span>
       <div class="ncf__zones" role="radiogroup">
+        {%- if pays == 'CM' %}
+        <label><input type="radio" name="zone" value="yaounde" checked><span>📍 Yaoundé</span></label>
+        <label><input type="radio" name="zone" value="douala"><span>📍 Douala</span></label>
+        <label><input type="radio" name="zone" value="autres"><span>🚚 Autres zones</span></label>
+        {%- else %}
         <label><input type="radio" name="zone" value="dakar" checked><span>📍 Dakar</span></label>
         <label><input type="radio" name="zone" value="hors_dakar"><span>🚚 Hors Dakar</span></label>
+        {%- endif %}
       </div>
+      {%- if pays == 'SN' %}
       <p class="ncf__hors" hidden>Pour toute région hors de Dakar, le paiement se fait avant l’expédition du colis.</p>
+      {%- endif %}
     </div>
     <label class="ncf__champ">
       <span>Quartier et ville</span>
-      <input name="adresse" type="text" autocomplete="street-address" placeholder="Ex : Liberté 6, près de la pharmacie, Dakar" required>
+      <input name="adresse" type="text" autocomplete="street-address" placeholder="{% if pays == 'CM' %}Ex : Bastos, près de la pharmacie, Yaoundé{% else %}Ex : Liberté 6, près de la pharmacie, Dakar{% endif %}" required>
     </label>
     <label class="ncf__piege" aria-hidden="true">Site web <input name="site_web" type="text" tabindex="-1" autocomplete="off"></label>
 
@@ -77,6 +87,7 @@
   .ncf__zones{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .ncf__zones label{position:relative;cursor:pointer}
   .ncf__zones input{position:absolute;opacity:0;pointer-events:none}
+  .ncf--cm .ncf__zones{grid-template-columns:1fr 1fr 1fr}
   .ncf__zones span{display:block;padding:12px 8px;border:1px solid #cfcfcf;border-radius:10px;text-align:center;font-weight:600;background:#fff}
   .ncf__zones input:checked + span{border:2px solid #1a1a1a;background:#f0f0f0}
   .ncf__hors{margin:8px 0 0;padding:10px 12px;border-radius:10px;background:#fff4e0;font-size:.9em;line-height:1.4}
@@ -127,35 +138,41 @@
     function majTotal() { sortieQte.textContent = qte; totalEl.textContent = fcfa(prix * qte); }
     function cookie(nom) { var m = document.cookie.match('(?:^|; )' + nom + '=([^;]*)'); return m ? decodeURIComponent(m[1]) : ''; }
 
-    // Numéro sénégalais : 9 chiffres commençant par 70, 75, 76, 77, 78 (ou 33 fixe), avec ou sans +221.
+    // Règles par pays (mêmes que le serveur) : Sénégal 9 chiffres en 70, 75, 76, 77, 78 (ou 33 fixe), +221 ;
+    // Cameroun 9 chiffres en 6 (ou 2 fixe), +237. Le fuseau sert au message d'appel (Sénégal UTC+0, Cameroun UTC+1).
+    var REGLES_PAYS = {
+      SN: { ind: '221', valide: /^(7[05678]|33)\d{7}$/, decoupe: [2, 5, 7, 9], fuseau: 0, zone: 'dakar' },
+      CM: { ind: '237', valide: /^[62]\d{8}$/, decoupe: [3, 5, 7, 9], fuseau: 1, zone: 'yaounde' }
+    };
+    var PAYS = REGLES_PAYS[racine.dataset.pays] || REGLES_PAYS.SN;
     function chiffresTel(v) {
       var d = String(v || '').replace(/\D/g, '');
-      if (d.indexOf('00221') === 0) d = d.slice(5); else if (d.indexOf('221') === 0 && d.length > 9) d = d.slice(3);
+      if (d.indexOf('00' + PAYS.ind) === 0) d = d.slice(5); else if (d.indexOf(PAYS.ind) === 0 && d.length > 9) d = d.slice(3);
       return d;
     }
-    function telValide(v) { return /^(7[05678]|33)\d{7}$/.test(chiffresTel(v)); }
+    function telValide(v) { return PAYS.valide.test(chiffresTel(v)); }
     function majTel(final) {
-      var d = chiffresTel(champTel.value).slice(0, 9);
-      champTel.value = [d.slice(0, 2), d.slice(2, 5), d.slice(5, 7), d.slice(7, 9)].filter(Boolean).join(' ');
+      var d = chiffresTel(champTel.value).slice(0, 9), c = PAYS.decoupe;
+      champTel.value = [d.slice(0, c[0]), d.slice(c[0], c[1]), d.slice(c[1], c[2]), d.slice(c[2], c[3])].filter(Boolean).join(' ');
       var ok = telValide(d);
       champTel.classList.toggle('ncf--valide', ok);
       champTel.classList.toggle('ncf--invalide', !ok && (final || d.length >= 9));
       okTel.hidden = !ok;
       aideTel.hidden = ok || !(final || d.length >= 9);
     }
-    // Dakar / Hors Dakar : hors Dakar, le paiement se fait avant l'expédition (on prévient avant la commande).
+    // Zone de livraison. Sénégal : hors Dakar, le paiement se fait avant l'expédition (on prévient avant la commande).
     var horsEl = racine.querySelector('.ncf__hors');
-    function zone() { var z = form.querySelector('input[name=zone]:checked'); return z ? z.value : 'dakar'; }
+    function zone() { var z = form.querySelector('input[name=zone]:checked'); return z ? z.value : PAYS.zone; }
     form.querySelectorAll('input[name=zone]').forEach(function (r) {
-      r.addEventListener('change', function () { horsEl.hidden = zone() !== 'hors_dakar'; });
+      r.addEventListener('change', function () { if (horsEl) horsEl.hidden = zone() !== 'hors_dakar'; });
     });
     champTel.addEventListener('input', function () { majTel(false); });
     champTel.addEventListener('blur', function () { if (champTel.value) majTel(true); });
 
-    // Heure locale du Sénégal (UTC+0) : avant l'heure limite on promet un appel rapide, sinon demain matin.
-    function heureSenegal() { return new Date().getUTCHours(); }
+    // Heure locale du pays : avant l'heure limite on promet un appel rapide, sinon demain matin.
+    function heureLocale() { return (new Date().getUTCHours() + PAYS.fuseau) % 24; }
     function messageAppel() {
-      var h = heureSenegal();
+      var h = heureLocale();
       if (h >= reglages.heure_debut && h < reglages.heure_limite) {
         return '📞 Un conseiller vous appelle dans les <strong>10 minutes</strong> pour confirmer. Répondez pour recevoir votre colis rapidement.';
       }

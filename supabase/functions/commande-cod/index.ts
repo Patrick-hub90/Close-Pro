@@ -19,6 +19,12 @@ const INDICATIFS: Record<string, { ind: string; len: number; prefixes: RegExp }>
   CI: { ind: '225', len: 10, prefixes: /^(0[157]|2[157])/ },
 }
 
+// Zones de livraison du formulaire -> champ `region` de la commande.
+const ZONES: Record<string, string> = {
+  dakar: 'Dakar', hors_dakar: 'Hors Dakar',
+  yaounde: 'Yaoundé', douala: 'Douala', autres: 'Autres zones',
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -214,9 +220,9 @@ Deno.serve(async (req) => {
 
   const nom = court(b.nom, 80)
   const adresse = court(b.adresse, 200)
-  // Zone de livraison (Sénégal) : « Dakar » ou « Hors Dakar » (paiement avant expédition). Anciennes versions : `ville`.
-  const horsDakar = b.zone === 'hors_dakar'
-  const ville = b.zone === 'dakar' ? 'Dakar' : horsDakar ? 'Hors Dakar' : court(b.ville, 80)
+  // Zone de livraison choisie dans le formulaire (Sénégal : Dakar / Hors Dakar, paiement avant expédition hors
+  // Dakar ; Cameroun : Yaoundé / Douala / Autres zones). Anciennes versions : `ville`.
+  const ville = ZONES[b.zone as string] ?? court(b.ville, 80)
   const handle = court(b.handle, 200)
   const quantite = Math.min(Math.max(parseInt(b.quantite) || 1, 1), 5)
   const e164 = normPhone(String(b.telephone || ''), pays)

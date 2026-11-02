@@ -54,6 +54,12 @@
       <span>Quartier et ville</span>
       <input name="adresse" type="text" autocomplete="street-address" placeholder="{% if pays == 'CM' %}Ex : Bastos, près de la pharmacie, Yaoundé{% elsif pays == 'CI' %}Ex : Cocody Angré, près de la pharmacie, Abidjan{% else %}Ex : Liberté 6, près de la pharmacie, Dakar{% endif %}" required>
     </label>
+    <div class="ncf__champ ncf__jour" hidden>
+      <span>Quand voulez-vous être livré ?</span>
+      <div class="ncf__jours" role="radiogroup"></div>
+      <select class="ncf__autre" aria-label="Autre jour de livraison" hidden></select>
+      <p class="ncf__jour-info"></p>
+    </div>
     <label class="ncf__piege" aria-hidden="true">Site web <input name="site_web" type="text" tabindex="-1" autocomplete="off"></label>
 
     <div class="ncf__qte">
@@ -66,6 +72,7 @@
     </div>
 
     <div class="ncf__total"><span>Total à payer à la livraison</span><strong data-total></strong></div>
+    <p class="ncf__total-detail" data-total-detail hidden></p>
     <p class="ncf__appel" data-appel></p>
     <div class="ncf__erreur" role="alert" hidden></div>
     <button class="ncf__bouton" type="submit">Je commande – paiement à la livraison</button>
@@ -75,6 +82,7 @@
   <div class="ncf__merci" hidden>
     <p class="ncf__merci-titre">✅ Commande reçue !</p>
     <p>Commande n° <strong data-numero></strong>.</p>
+    <p data-merci-livraison></p>
     <p data-merci-appel></p>
   </div>
 </div>
@@ -99,6 +107,17 @@
   .ncf__zones span{display:block;padding:12px 8px;border:1px solid #cfcfcf;border-radius:10px;text-align:center;font-weight:600;background:#fff}
   .ncf__zones input:checked + span{border:2px solid #1a1a1a;background:#f0f0f0}
   .ncf__hors{margin:8px 0 0;padding:10px 12px;border-radius:10px;background:#fff4e0;font-size:.9em;line-height:1.4}
+  .ncf [hidden]{display:none!important}
+  .ncf__jours{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .ncf__jours label{position:relative;cursor:pointer}
+  .ncf__jours input{position:absolute;opacity:0;pointer-events:none}
+  .ncf__jours span{display:flex;flex-direction:column;justify-content:center;min-height:58px;padding:8px 6px;border:1px solid #cfcfcf;border-radius:10px;text-align:center;font-weight:600;font-size:.9em;line-height:1.25;background:#fff}
+  .ncf__jours small{display:block;font-weight:500;font-size:.8em;color:#555}
+  .ncf__jours .ncf--offert small{color:#00a341;font-weight:700}
+  .ncf__jours input:checked + span{border:2px solid #00a341;background:#eaf7ef}
+  .ncf .ncf__autre{width:100%;margin-top:8px;padding:10px 12px;border:1px solid #cfcfcf;border-radius:10px;font-size:16px;background:#fff}
+  .ncf__jour-info{margin:8px 0 0;font-size:.85em;line-height:1.4;color:#1a1a1a}
+  .ncf__total-detail{margin:-4px 0 10px;font-size:.85em;color:#555;text-align:right}
   .ncf__piege{position:absolute!important;left:-9999px!important;width:1px;height:1px;overflow:hidden}
   .ncf__qte,.ncf__total{display:flex;align-items:center;justify-content:space-between;margin:10px 0}
   .ncf__stepper{display:flex;align-items:center;gap:6px;border:1px solid #cfcfcf;border-radius:999px;padding:3px}
@@ -135,7 +154,8 @@
     var prix = Number(racine.dataset.prix) || 0;
     var devise = racine.dataset.devise || 'XOF';
     var qte = 1, debutSaisie = false;
-    var reglages = { heure_debut: 8, heure_limite: 19, contact: null };
+    var reglages = { heure_debut: 8, heure_limite: 19, contact: null, livraison_limite: null, livraison_frais: 1000 };
+    var totalDetail = racine.querySelector('[data-total-detail]');
 
     // Garde l'URL d'arrivée (avec fbclid / utm de la pub) pour la durée de la visite.
     try {
@@ -143,7 +163,15 @@
     } catch (e) {}
 
     function fcfa(n) { return n.toLocaleString('fr-FR').replace(/ | /g, ' ') + ' FCFA'; }
-    function majTotal() { sortieQte.textContent = qte; totalEl.textContent = fcfa(prix * qte); }
+    function majTotal() {
+      sortieQte.textContent = qte;
+      var l = livraison(), frais = l ? l.frais : 0;
+      totalEl.textContent = fcfa(prix * qte + frais);
+      totalDetail.hidden = !l;
+      if (l) totalDetail.textContent = l.ville
+        ? (frais ? 'dont livraison : ' + fcfa(frais) : 'Livraison gratuite')
+        : '+ ' + l.part + ' % des frais d’envoi, montant confirmé par téléphone';
+    }
     function cookie(nom) { var m = document.cookie.match('(?:^|; )' + nom + '=([^;]*)'); return m ? decodeURIComponent(m[1]) : ''; }
 
     // Règles par pays (mêmes que le serveur) : Sénégal 9 chiffres en 70, 75, 76, 77, 78 (ou 33 fixe), +221 ;
@@ -175,8 +203,67 @@
     var horsEl = racine.querySelector('.ncf__hors');
     function zone() { var z = form.querySelector('input[name=zone]:checked'); return z ? z.value : PAYS.zone; }
     form.querySelectorAll('input[name=zone]').forEach(function (r) {
-      r.addEventListener('change', function () { if (horsEl) horsEl.hidden = zone() !== PAYS.horsZone; });
+      r.addEventListener('change', function () { if (horsEl) horsEl.hidden = zone() !== PAYS.horsZone; majJours(); });
     });
+
+    // Jour de livraison (boutiques où app_config `cod_livraison_limite_<domaine>` est réglé). La première
+    // livraison possible (aujourd'hui avant l'heure limite, sinon demain) est offerte en ville ; les autres jours
+    // coûtent `livraison_frais`. Hors des grandes villes, on choisit le jour d'expédition : 50 % des frais d'envoi
+    // le premier jour possible, 100 % ensuite (montant donné par la closeuse). Le serveur refait le calcul.
+    var jourBloc = racine.querySelector('.ncf__jour'), joursEl = racine.querySelector('.ncf__jours');
+    var autreEl = racine.querySelector('.ncf__autre'), jourInfo = racine.querySelector('.ncf__jour-info');
+    var NB_JOURS = 6;
+    function premierJour() { return heureLocale() < reglages.livraison_limite ? 0 : 1; }
+    function nomJour(decalage) {
+      if (decalage === 0) return "Aujourd'hui";
+      if (decalage === 1) return 'Demain';
+      var d = new Date(Date.now() + PAYS.fuseau * 3600000 + decalage * 86400000);
+      var t = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
+      return t.charAt(0).toUpperCase() + t.slice(1);
+    }
+    function enVille() { return zone() !== PAYS.horsZone; }
+    function jourChoisi() {
+      var r = joursEl.querySelector('input:checked');
+      if (!r) return null;
+      return r.value === 'autre' ? Number(autreEl.value) : Number(r.value);
+    }
+    function livraison() {
+      if (reglages.livraison_limite == null) return null;
+      var j = jourChoisi();
+      if (j == null) return null;
+      var premier = j === premierJour(), ville = enVille();
+      return { decalage: j, premier: premier, ville: ville, frais: ville && !premier ? reglages.livraison_frais : 0, part: premier ? 50 : 100 };
+    }
+    function majJours() {
+      if (reglages.livraison_limite == null) return;
+      var garde = jourChoisi(), p = premierJour(), ville = enVille();
+      var prix1 = ville ? 'Gratuite' : '50 % des frais';
+      var prixN = ville ? '+ ' + fcfa(reglages.livraison_frais) : '100 % des frais';
+      joursEl.innerHTML =
+        '<label><input type="radio" name="jour" value="' + p + '"><span class="ncf--offert">' + nomJour(p) + '<small>' + prix1 + '</small></span></label>' +
+        '<label><input type="radio" name="jour" value="' + (p + 1) + '"><span>' + nomJour(p + 1) + '<small>' + prixN + '</small></span></label>' +
+        '<label><input type="radio" name="jour" value="autre"><span>Autre jour<small>' + prixN + '</small></span></label>';
+      autreEl.innerHTML = '';
+      for (var j = p + 2; j < p + NB_JOURS; j++) autreEl.insertAdjacentHTML('beforeend', '<option value="' + j + '">' + nomJour(j) + '</option>');
+      var cible = garde != null && garde >= p ? (garde <= p + 1 ? String(garde) : 'autre') : String(p);
+      joursEl.querySelector('input[value="' + cible + '"]').checked = true;
+      if (cible === 'autre') autreEl.value = String(garde);
+      joursEl.querySelectorAll('input').forEach(function (r) { r.addEventListener('change', majChoixJour); });
+      majChoixJour();
+    }
+    function majChoixJour() {
+      var coche = joursEl.querySelector('input:checked');
+      autreEl.hidden = !coche || coche.value !== 'autre';
+      var l = livraison();
+      if (!l) return;
+      jourInfo.innerHTML = l.ville
+        ? (l.premier ? '🎁 <strong>Livraison gratuite</strong> en choisissant ' + nomJour(l.decalage).toLowerCase() + '.'
+          : 'Livraison à ' + fcfa(reglages.livraison_frais) + '. Elle est <strong>gratuite ' + nomJour(premierJour()).toLowerCase() + '</strong>.')
+        : (l.premier ? '🚚 Expédition ' + nomJour(l.decalage).toLowerCase() + ' : vous ne payez que <strong>50 % des frais d’envoi</strong>.'
+          : 'Expédition plus tard : 100 % des frais d’envoi. Choisissez ' + nomJour(premierJour()).toLowerCase() + ' pour n’en payer que <strong>50 %</strong>.');
+      majTotal();
+    }
+    autreEl.addEventListener('change', majChoixJour);
     champTel.addEventListener('input', function () { majTel(false); });
     champTel.addEventListener('blur', function () { if (champTel.value) majTel(true); });
 
@@ -194,7 +281,12 @@
     majTotal();
     majAppel();
     fetch(FONCTION + '?shop=' + encodeURIComponent(racine.dataset.shop)).then(function (r) { return r.json(); })
-      .then(function (r) { if (r && r.ok) { reglages = r; majAppel(); } }).catch(function () {});
+      .then(function (r) {
+        if (!r || !r.ok) return;
+        reglages = r;
+        majAppel();
+        if (r.livraison_limite != null) { jourBloc.hidden = false; majJours(); }
+      }).catch(function () {});
 
     racine.querySelectorAll('[data-q]').forEach(function (b) {
       b.addEventListener('click', function () { qte = Math.min(5, Math.max(1, qte + Number(b.dataset.q))); majTotal(); });
@@ -233,7 +325,8 @@
         body: JSON.stringify({
           shop: racine.dataset.shop, handle: racine.dataset.handle, quantite: qte,
           nom: nom, telephone: tel, adresse: adr, zone: zone(), site_web: d.get('site_web'),
-          full_url: arrivee || location.href, fbp: cookie('_fbp'), fbc: cookie('_fbc'), event_id: eventId
+          full_url: arrivee || location.href, fbp: cookie('_fbp'), fbc: cookie('_fbc'), event_id: eventId,
+          jour_livraison: livraison() ? livraison().decalage : null
         })
       }).then(function (r) { return r.json(); }).then(function (rep) {
         if (rep.deja) {
@@ -245,6 +338,7 @@
         if (!rep.ok) throw new Error(rep.erreur || 'Erreur, réessayez.');
         if (window.fbq) fbq('track', 'Purchase', { value: rep.total, currency: devise, content_ids: [racine.dataset.handle], content_type: 'product' }, { eventID: eventId });
         racine.querySelector('[data-numero]').textContent = rep.numero;
+        if (rep.livraison) racine.querySelector('[data-merci-livraison]').textContent = '📅 ' + rep.livraison;
         racine.querySelector('[data-merci-appel]').innerHTML = messageAppel();
         form.hidden = true;
         racine.querySelector('.ncf__merci').hidden = false;

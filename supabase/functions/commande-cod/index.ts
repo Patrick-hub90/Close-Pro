@@ -19,6 +19,11 @@ const INDICATIFS: Record<string, { ind: string; len: number; prefixes: RegExp }>
   CI: { ind: '225', len: 10, prefixes: /^(0[157]|2[157])/ },
 }
 
+// Fuseau de chaque pays (heure limite de livraison du jour, libellés des jours).
+const FUSEAUX: Record<string, string> = { SN: 'Africa/Dakar', CM: 'Africa/Douala', CI: 'Africa/Abidjan' }
+// Zones « hors grande ville » : le colis est expédié (payé avant l'envoi) au lieu d'être livré en ville.
+const ZONES_EXPEDITION = new Set(['hors_dakar', 'autres', 'hors_abidjan'])
+
 // Zones de livraison du formulaire -> champ `region` de la commande.
 const ZONES: Record<string, string> = {
   dakar: 'Dakar', hors_dakar: 'Hors Dakar',
@@ -100,6 +105,7 @@ async function adminShopify(shop: string, query: string, variables: Record<strin
 async function commandeShopify(shop: string, o: {
   numero: string; variante: string; quantite: number; prix: number; nom: string; e164: string
   adresse: string; ville: string | null; pays: string; test: boolean; devise: string
+  fraisLivraison: number; livraison: string | null
 }) {
   const [prenom, ...reste] = o.nom.split(/\s+/)
   const creer = (avecTel: boolean) => adminShopify(shop, `mutation($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
@@ -115,7 +121,10 @@ async function commandeShopify(shop: string, o: {
         firstName: prenom, lastName: reste.join(' ') || prenom, address1: o.adresse, city: o.ville || '', countryCode: o.pays,
         ...(avecTel ? { phone: o.e164 } : {}),
       },
-      note: 'Formulaire Noshop – commande Close-Pro n° ' + o.numero + ' – tél. ' + o.e164,
+      ...(o.fraisLivraison > 0
+        ? { shippingLines: [{ title: 'Livraison', priceSet: { shopMoney: { amount: String(o.fraisLivraison), currencyCode: o.devise } } }] }
+        : {}),
+      note: 'Formulaire Noshop – commande Close-Pro n° ' + o.numero + ' – tél. ' + o.e164 + (o.livraison ? ' – ' + o.livraison : ''),
       tags: ['formulaire-cod', 'close-pro'],
       sourceName: 'noshop-formulaire',
     },
@@ -201,11 +210,40 @@ async function envoyerAchatMeta(o: {
  * `cod_contact_<domaine>` (numéro à contacter si le client a déjà commandé sans être rappelé).
  */
 async function reglages(shop: string) {
+  const limite = await config('cod_livraison_limite_' + shop)
   return {
     heure_debut: Number(await config('cod_heure_debut_' + shop) ?? 8),
     heure_limite: Number(await config('cod_heure_limite_' + shop) ?? 19),
     contact: await config('cod_contact_' + shop),
+    // Choix du jour de livraison (`cod_livraison_limite_<domaine>` = heure limite pour livrer le jour même) :
+    // absent = pas de choix dans le formulaire.
+    livraison_limite: limite == null ? null : Number(limite),
+    livraison_frais: Number(await config('cod_livraison_frais_' + shop) ?? 1000),
   }
+}
+
+/**
+ * Jour de livraison choisi (décalage en jours depuis aujourd'hui, heure du pays). Le premier jour possible
+ * (aujourd'hui avant l'heure limite, sinon demain) est offert en ville ; les autres coûtent `frais`. Hors des
+ * grandes villes, le colis est expédié : 50 % des frais d'envoi le premier jour possible, 100 % ensuite.
+ */
+function jourLivraison(decalage: unknown, pays: string, zone: string, limite: number, frais: number) {
+  const fuseau = FUSEAUX[pays] ?? 'UTC'
+  const heure = Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hourCycle: 'h23', timeZone: fuseau }).format(new Date()))
+  const premier = heure < limite ? 0 : 1
+  const d = Math.min(Math.max(Math.trunc(Number(decalage)) || 0, premier), premier + 6)
+  const date = new Date(Date.now() + d * 86400000)
+  const jourIso = new Intl.DateTimeFormat('en-CA', { timeZone: fuseau }).format(date)
+  const nom = d === 0 ? "aujourd'hui" : d === 1 ? 'demain'
+    : new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: fuseau }).format(date)
+  const offert = d === premier
+  const expedition = ZONES_EXPEDITION.has(zone)
+  const fraisClient = expedition || offert ? 0 : frais
+  const part = expedition ? (offert ? 50 : 100) : null
+  const texte = expedition
+    ? `Expédition ${nom} – ${part} % des frais d'envoi à la charge du client`
+    : `Livraison ${nom} – ${offert ? 'gratuite' : fraisClient + ' F'}`
+  return { jourIso, fraisClient, part, texte }
 }
 
 Deno.serve(async (req) => {
@@ -246,7 +284,11 @@ Deno.serve(async (req) => {
 
   const produit = await produitBoutique(shop, handle)
   if (!produit) return json({ ok: false, erreur: 'Produit introuvable.' }, 422)
-  const total = produit.prix * quantite
+  const regl = await reglages(shop)
+  const livraison = regl.livraison_limite != null && b.jour_livraison != null
+    ? jourLivraison(b.jour_livraison, pays, String(b.zone || ''), regl.livraison_limite, regl.livraison_frais)
+    : null
+  const total = produit.prix * quantite + (livraison?.fraisClient ?? 0)
 
   // Une seule commande en cours par numéro sur 24 h : on prévient le client au lieu d'en créer une 2e.
   if (!test) {
@@ -256,7 +298,7 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: false }).limit(1).maybeSingle()
     if (deja) {
       const d = deja as { numero: string; statut: string; produit_nom: string | null }
-      return json({ ok: false, deja: true, numero: d.numero, produit: d.produit_nom, appele: d.statut !== 'a_appeler', contact: (await reglages(shop)).contact })
+      return json({ ok: false, deja: true, numero: d.numero, produit: d.produit_nom, appele: d.statut !== 'a_appeler', contact: regl.contact })
     }
   }
 
@@ -280,6 +322,11 @@ Deno.serve(async (req) => {
   const ip = court((req.headers.get('x-forwarded-for') || '').split(',')[0], 64)
   const ua = court(req.headers.get('user-agent'), 500)
   const maintenant = new Date().toISOString()
+  // Jour de livraison choisi par le client, affiché sur la fiche d'appel de la closeuse (champs `extra`).
+  const extraLivraison = livraison
+    ? { livraison: livraison.texte, livraison_jour: livraison.jourIso, frais_livraison_client: livraison.fraisClient,
+        ...(livraison.part != null ? { part_frais_envoi: livraison.part + ' %' } : {}) }
+    : {}
 
   const { error } = await db.from('orders').insert({
     pays, numero, source: 'formulaire',
@@ -287,10 +334,11 @@ Deno.serve(async (req) => {
     nom_complet: nom, telephone: court(b.telephone, 40), telephone_e164: e164,
     whatsapp: e164.replace(/\D/g, ''), adresse, region: ville,
     statut: test ? 'annule' : 'a_appeler', is_backfill: false,
-    dernier_commentaire: test ? 'TEST formulaire (à ignorer)' : alerte,
+    dernier_commentaire: test ? 'TEST formulaire (à ignorer)'
+      : [livraison ? '📅 ' + livraison.texte : null, alerte].filter(Boolean).join(' · ') || null,
     appel_deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(), appel_deadline_type: 'nouvelle_10min',
     date_commande: maintenant,
-    extra: { boutique: shop, handle, variante: produit.variante, note: court(b.note, 300) },
+    extra: { boutique: shop, handle, variante: produit.variante, note: court(b.note, 300), ...extraLivraison },
   })
   if (error) { console.error('insert', numero, error.message); return json({ ok: false, erreur: 'Erreur, réessayez.' }, 500) }
 
@@ -304,10 +352,11 @@ Deno.serve(async (req) => {
       shopifyCommande = await commandeShopify(shop, {
         numero, variante: produit.variante, quantite, prix: produit.prix, nom, e164, adresse, ville, pays, test,
         devise: ('devise' in produit && produit.devise) || 'XOF',
+        fraisLivraison: livraison?.fraisClient ?? 0, livraison: livraison?.texte ?? null,
       })
       if (shopifyCommande) {
         await db.from('orders').update({
-          extra: { boutique: shop, handle, variante: produit.variante, note: court(b.note, 300), shopify_id: shopifyCommande.id, shopify_nom: shopifyCommande.name },
+          extra: { boutique: shop, handle, variante: produit.variante, note: court(b.note, 300), ...extraLivraison, shopify_id: shopifyCommande.id, shopify_nom: shopifyCommande.name },
         }).eq('pays', pays).eq('numero', numero)
       }
     } catch (e) { console.error('shopify', numero, String(e)) }
@@ -321,6 +370,6 @@ Deno.serve(async (req) => {
     } catch (e) { console.error('capi', numero, String(e)) }
   }
 
-  console.log('commande', JSON.stringify({ shop, pays, numero, handle, quantite, total, test, shopify: shopifyCommande?.name ?? null }))
-  return json({ ok: true, numero, total, shopify: !!shopifyCommande })
+  console.log('commande', JSON.stringify({ shop, pays, numero, handle, quantite, total, test, livraison: livraison?.texte ?? null, shopify: shopifyCommande?.name ?? null }))
+  return json({ ok: true, numero, total, shopify: !!shopifyCommande, livraison: livraison ? livraison.texte.charAt(0).toUpperCase() + livraison.texte.slice(1) : null })
 })

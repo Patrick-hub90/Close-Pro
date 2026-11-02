@@ -71,7 +71,7 @@
       </div>
     </div>
 
-    <div class="ncf__total"><span>Total à payer à la livraison</span><strong data-total></strong></div>
+    <div class="ncf__total"><span data-total-libelle>Total à payer à la livraison</span><strong data-total></strong></div>
     <p class="ncf__total-detail" data-total-detail hidden></p>
     <p class="ncf__appel" data-appel></p>
     <div class="ncf__erreur" role="alert" hidden></div>
@@ -163,8 +163,13 @@
     } catch (e) {}
 
     function fcfa(n) { return n.toLocaleString('fr-FR').replace(/ | /g, ' ') + ' FCFA'; }
+    // Hors des grandes villes, le client paie avant l'expédition : les textes « à la livraison » changent.
+    var totalLibelle = racine.querySelector('[data-total-libelle]');
+    function texteBouton() { return enVille() ? 'Je commande – paiement à la livraison' : 'Je commande – paiement avant expédition'; }
     function majTotal() {
       sortieQte.textContent = qte;
+      totalLibelle.textContent = enVille() ? 'Total à payer à la livraison' : 'Total à payer avant l’expédition';
+      if (!bouton.disabled) bouton.textContent = texteBouton();
       var l = livraison(), frais = l ? l.frais : 0;
       totalEl.textContent = fcfa(prix * qte + frais);
       totalDetail.hidden = !l;
@@ -203,7 +208,7 @@
     var horsEl = racine.querySelector('.ncf__hors');
     function zone() { var z = form.querySelector('input[name=zone]:checked'); return z ? z.value : PAYS.zone; }
     form.querySelectorAll('input[name=zone]').forEach(function (r) {
-      r.addEventListener('change', function () { if (horsEl) horsEl.hidden = zone() !== PAYS.horsZone; majJours(); });
+      r.addEventListener('change', function () { if (horsEl) horsEl.hidden = zone() !== PAYS.horsZone; majJours(); majTotal(); });
     });
 
     // Jour de livraison (boutiques où app_config `cod_livraison_limite_<domaine>` est réglé). La première
@@ -347,7 +352,7 @@
         montrerErreur(e.message || 'Connexion impossible, réessayez.');
       }).finally(function () {
         bouton.disabled = false;
-        bouton.textContent = 'Je commande – paiement à la livraison';
+        bouton.textContent = texteBouton();
       });
     });
 

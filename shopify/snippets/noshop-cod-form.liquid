@@ -4,7 +4,7 @@
   l'appli des closeuses. Le prix affiché n'est qu'indicatif : le serveur relit le vrai prix.
   Les heures d'appel et le numéro de contact viennent de la fonction (réglages app_config), pas du thème.
   Usage dans un bloc « Liquid personnalisé » de la page produit : {% render 'noshop-cod-form', product: product %}
-  (Cameroun : ajouter `pays: 'CM'`).
+  (Cameroun : ajouter `pays: 'CM'`, Côte d'Ivoire : `pays: 'CI'`).
 {%- endcomment -%}
 {%- assign prix = product.selected_or_first_available_variant.price -%}
 {%- comment -%} Pays du formulaire donné par la page (paramètre pays), Sénégal par défaut. {%- endcomment -%}
@@ -17,15 +17,15 @@
 
     <label class="ncf__champ">
       <span>Nom complet</span>
-      <input name="nom" type="text" autocomplete="name" placeholder="{% if pays == 'CM' %}Ex : Jean Mbarga{% else %}Ex : Moussa Diop{% endif %}" required>
+      <input name="nom" type="text" autocomplete="name" placeholder="{% if pays == 'CM' %}Ex : Jean Mbarga{% elsif pays == 'CI' %}Ex : Konan Yao{% else %}Ex : Moussa Diop{% endif %}" required>
     </label>
     <label class="ncf__champ">
       <span>Téléphone (WhatsApp de préférence)</span>
       <span class="ncf__tel">
-        <input name="telephone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="{% if pays == 'CM' %}696 23 13 67{% else %}77 123 45 67{% endif %}" maxlength="16" required>
+        <input name="telephone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="{% if pays == 'CM' %}696 23 13 67{% elsif pays == 'CI' %}05 96 67 83 00{% else %}77 123 45 67{% endif %}" maxlength="16" required>
         <i class="ncf__ok" aria-hidden="true" hidden>✓</i>
       </span>
-      <small class="ncf__aide" hidden>{% if pays == 'CM' %}Numéro camerounais à 9 chiffres, commençant par 6.{% else %}Numéro sénégalais à 9 chiffres, commençant par 70, 75, 76, 77 ou 78.{% endif %}</small>
+      <small class="ncf__aide" hidden>{% if pays == 'CM' %}Numéro camerounais à 9 chiffres, commençant par 6.{% elsif pays == 'CI' %}Numéro ivoirien à 10 chiffres, commençant par 01, 05 ou 07.{% else %}Numéro sénégalais à 9 chiffres, commençant par 70, 75, 76, 77 ou 78.{% endif %}</small>
     </label>
     <div class="ncf__champ">
       <span>Lieu de livraison</span>
@@ -34,6 +34,9 @@
         <label><input type="radio" name="zone" value="yaounde" checked><span>📍 Yaoundé</span></label>
         <label><input type="radio" name="zone" value="douala"><span>📍 Douala</span></label>
         <label><input type="radio" name="zone" value="autres"><span>🚚 Autres zones</span></label>
+        {%- elsif pays == 'CI' %}
+        <label><input type="radio" name="zone" value="abidjan" checked><span>📍 Abidjan</span></label>
+        <label><input type="radio" name="zone" value="hors_abidjan"><span>🚚 Hors Abidjan</span></label>
         {%- else %}
         <label><input type="radio" name="zone" value="dakar" checked><span>📍 Dakar</span></label>
         <label><input type="radio" name="zone" value="hors_dakar"><span>🚚 Hors Dakar</span></label>
@@ -41,13 +44,15 @@
       </div>
       {%- if pays == 'CM' %}
       <p class="ncf__hors" hidden>Pour toute zone hors de Yaoundé et Douala, le paiement se fait avant l’expédition du colis.</p>
+      {%- elsif pays == 'CI' %}
+      <p class="ncf__hors" hidden>Pour toute région hors d’Abidjan, le paiement se fait avant l’expédition du colis.</p>
       {%- else %}
       <p class="ncf__hors" hidden>Pour toute région hors de Dakar, le paiement se fait avant l’expédition du colis.</p>
       {%- endif %}
     </div>
     <label class="ncf__champ">
       <span>Quartier et ville</span>
-      <input name="adresse" type="text" autocomplete="street-address" placeholder="{% if pays == 'CM' %}Ex : Bastos, près de la pharmacie, Yaoundé{% else %}Ex : Liberté 6, près de la pharmacie, Dakar{% endif %}" required>
+      <input name="adresse" type="text" autocomplete="street-address" placeholder="{% if pays == 'CM' %}Ex : Bastos, près de la pharmacie, Yaoundé{% elsif pays == 'CI' %}Ex : Cocody Angré, près de la pharmacie, Abidjan{% else %}Ex : Liberté 6, près de la pharmacie, Dakar{% endif %}" required>
     </label>
     <label class="ncf__piege" aria-hidden="true">Site web <input name="site_web" type="text" tabindex="-1" autocomplete="off"></label>
 
@@ -142,29 +147,31 @@
     function cookie(nom) { var m = document.cookie.match('(?:^|; )' + nom + '=([^;]*)'); return m ? decodeURIComponent(m[1]) : ''; }
 
     // Règles par pays (mêmes que le serveur) : Sénégal 9 chiffres en 70, 75, 76, 77, 78 (ou 33 fixe), +221 ;
-    // Cameroun 9 chiffres en 6 (ou 2 fixe), +237. Le fuseau sert au message d'appel (Sénégal UTC+0, Cameroun UTC+1).
+    // Cameroun 9 chiffres en 6 (ou 2 fixe), +237 ; Côte d'Ivoire 10 chiffres en 01, 05, 07 (ou 21, 25, 27 fixe), +225.
+    // Le fuseau sert au message d'appel (Sénégal et Côte d'Ivoire UTC+0, Cameroun UTC+1).
     var REGLES_PAYS = {
-      SN: { ind: '221', valide: /^(7[05678]|33)\d{7}$/, decoupe: [2, 5, 7, 9], fuseau: 0, zone: 'dakar', horsZone: 'hors_dakar' },
-      CM: { ind: '237', valide: /^[62]\d{8}$/, decoupe: [3, 5, 7, 9], fuseau: 1, zone: 'yaounde', horsZone: 'autres' }
+      SN: { ind: '221', long: 9, valide: /^(7[05678]|33)\d{7}$/, decoupe: [2, 5, 7, 9], fuseau: 0, zone: 'dakar', horsZone: 'hors_dakar' },
+      CM: { ind: '237', long: 9, valide: /^[62]\d{8}$/, decoupe: [3, 5, 7, 9], fuseau: 1, zone: 'yaounde', horsZone: 'autres' },
+      CI: { ind: '225', long: 10, valide: /^(0[157]|2[157])\d{8}$/, decoupe: [2, 4, 6, 8, 10], fuseau: 0, zone: 'abidjan', horsZone: 'hors_abidjan' }
     };
     var PAYS = REGLES_PAYS[racine.dataset.pays] || REGLES_PAYS.SN;
     function chiffresTel(v) {
       var d = String(v || '').replace(/\D/g, '');
-      if (d.indexOf('00' + PAYS.ind) === 0) d = d.slice(5); else if (d.indexOf(PAYS.ind) === 0 && d.length > 9) d = d.slice(3);
+      if (d.indexOf('00' + PAYS.ind) === 0) d = d.slice(5); else if (d.indexOf(PAYS.ind) === 0 && d.length > PAYS.long) d = d.slice(3);
       return d;
     }
     function telValide(v) { return PAYS.valide.test(chiffresTel(v)); }
     function majTel(final) {
-      var d = chiffresTel(champTel.value).slice(0, 9), c = PAYS.decoupe;
-      champTel.value = [d.slice(0, c[0]), d.slice(c[0], c[1]), d.slice(c[1], c[2]), d.slice(c[2], c[3])].filter(Boolean).join(' ');
-      var ok = telValide(d);
+      var d = chiffresTel(champTel.value).slice(0, PAYS.long);
+      champTel.value = PAYS.decoupe.map(function (fin, i) { return d.slice(i ? PAYS.decoupe[i - 1] : 0, fin); }).filter(Boolean).join(' ');
+      var ok = telValide(d), complet = final || d.length >= PAYS.long;
       champTel.classList.toggle('ncf--valide', ok);
-      champTel.classList.toggle('ncf--invalide', !ok && (final || d.length >= 9));
+      champTel.classList.toggle('ncf--invalide', !ok && complet);
       okTel.hidden = !ok;
-      aideTel.hidden = ok || !(final || d.length >= 9);
+      aideTel.hidden = ok || !complet;
     }
-    // Zone de livraison. Hors Dakar (Sénégal) ou hors Yaoundé / Douala (Cameroun), le paiement se fait avant
-    // l'expédition : on prévient avant la commande.
+    // Zone de livraison. Hors Dakar (Sénégal), hors Yaoundé / Douala (Cameroun) ou hors Abidjan (Côte d'Ivoire),
+    // le paiement se fait avant l'expédition : on prévient avant la commande.
     var horsEl = racine.querySelector('.ncf__hors');
     function zone() { var z = form.querySelector('input[name=zone]:checked'); return z ? z.value : PAYS.zone; }
     form.querySelectorAll('input[name=zone]').forEach(function (r) {

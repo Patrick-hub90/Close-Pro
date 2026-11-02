@@ -23,6 +23,7 @@ const INDICATIFS: Record<string, { ind: string; len: number; prefixes: RegExp }>
 const ZONES: Record<string, string> = {
   dakar: 'Dakar', hors_dakar: 'Hors Dakar',
   yaounde: 'Yaoundé', douala: 'Douala', autres: 'Autres zones',
+  abidjan: 'Abidjan', hors_abidjan: 'Hors Abidjan',
 }
 
 const CORS = {
@@ -61,6 +62,7 @@ async function sha256(v: string) {
 const APPLI_SHOPIFY: Record<string, { id: string; secret: string }> = {
   'utauxp-w2.myshopify.com': { id: 'SHOPIFY_SENE_CLIENT_ID', secret: 'SHOPIFY_SENE_CLIENT_SECRET' },
   'nrxije-7h.myshopify.com': { id: 'SHOPIFY_CM_CLIENT_ID_CAME', secret: 'SHOPIFY_SENE_CLIENT_SECRET_CAME' },
+  'mcyngg-zr.myshopify.com': { id: 'SHOPIFY_SENE_CLIENT_ID_CIV', secret: 'SHOPIFY_SENE_CLIENT_SECRET_CIV' },
 }
 const jetons = new Map<string, { jeton: string; expire: number }>()
 
@@ -226,8 +228,8 @@ Deno.serve(async (req) => {
 
   const nom = court(b.nom, 80)
   const adresse = court(b.adresse, 200)
-  // Zone de livraison choisie dans le formulaire (Sénégal : Dakar / Hors Dakar, paiement avant expédition hors
-  // Dakar ; Cameroun : Yaoundé / Douala / Autres zones). Anciennes versions : `ville`.
+  // Zone de livraison choisie dans le formulaire (Sénégal : Dakar / Hors Dakar ; Cameroun : Yaoundé / Douala /
+  // Autres zones ; Côte d'Ivoire : Abidjan / Hors Abidjan). Anciennes versions : `ville`.
   const ville = ZONES[b.zone as string] ?? court(b.ville, 80)
   const handle = court(b.handle, 200)
   const quantite = Math.min(Math.max(parseInt(b.quantite) || 1, 1), 5)

@@ -39,7 +39,9 @@
         <label><input type="radio" name="zone" value="hors_dakar"><span>🚚 Hors Dakar</span></label>
         {%- endif %}
       </div>
-      {%- if pays == 'SN' %}
+      {%- if pays == 'CM' %}
+      <p class="ncf__hors" hidden>Pour toute zone hors de Yaoundé et Douala, le paiement se fait avant l’expédition du colis.</p>
+      {%- else %}
       <p class="ncf__hors" hidden>Pour toute région hors de Dakar, le paiement se fait avant l’expédition du colis.</p>
       {%- endif %}
     </div>
@@ -142,8 +144,8 @@
     // Règles par pays (mêmes que le serveur) : Sénégal 9 chiffres en 70, 75, 76, 77, 78 (ou 33 fixe), +221 ;
     // Cameroun 9 chiffres en 6 (ou 2 fixe), +237. Le fuseau sert au message d'appel (Sénégal UTC+0, Cameroun UTC+1).
     var REGLES_PAYS = {
-      SN: { ind: '221', valide: /^(7[05678]|33)\d{7}$/, decoupe: [2, 5, 7, 9], fuseau: 0, zone: 'dakar' },
-      CM: { ind: '237', valide: /^[62]\d{8}$/, decoupe: [3, 5, 7, 9], fuseau: 1, zone: 'yaounde' }
+      SN: { ind: '221', valide: /^(7[05678]|33)\d{7}$/, decoupe: [2, 5, 7, 9], fuseau: 0, zone: 'dakar', horsZone: 'hors_dakar' },
+      CM: { ind: '237', valide: /^[62]\d{8}$/, decoupe: [3, 5, 7, 9], fuseau: 1, zone: 'yaounde', horsZone: 'autres' }
     };
     var PAYS = REGLES_PAYS[racine.dataset.pays] || REGLES_PAYS.SN;
     function chiffresTel(v) {
@@ -161,11 +163,12 @@
       okTel.hidden = !ok;
       aideTel.hidden = ok || !(final || d.length >= 9);
     }
-    // Zone de livraison. Sénégal : hors Dakar, le paiement se fait avant l'expédition (on prévient avant la commande).
+    // Zone de livraison. Hors Dakar (Sénégal) ou hors Yaoundé / Douala (Cameroun), le paiement se fait avant
+    // l'expédition : on prévient avant la commande.
     var horsEl = racine.querySelector('.ncf__hors');
     function zone() { var z = form.querySelector('input[name=zone]:checked'); return z ? z.value : PAYS.zone; }
     form.querySelectorAll('input[name=zone]').forEach(function (r) {
-      r.addEventListener('change', function () { if (horsEl) horsEl.hidden = zone() !== 'hors_dakar'; });
+      r.addEventListener('change', function () { if (horsEl) horsEl.hidden = zone() !== PAYS.horsZone; });
     });
     champTel.addEventListener('input', function () { majTel(false); });
     champTel.addEventListener('blur', function () { if (champTel.value) majTel(true); });
